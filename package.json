@@ -4,7 +4,7 @@
   "description": "Local-first AI memory and workflow assistant",
   "main": "src/index.js",
   "scripts": {
-    "test": "node tests/run.js",
+    "test": "jest",
     "start": "node src/index.js"
   },
   "keywords": ["ai", "audio", "transcription", "local", "privacy"],
@@ -13,5 +13,7 @@
   "dependencies": {
     "node-record-lpcm16": "^1.0.5"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
 }
