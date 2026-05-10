@@ -10,6 +10,8 @@
   "keywords": ["ai", "audio", "transcription", "local", "privacy"],
   "author": "",
   "license": "MIT",
-  "dependencies": {},
+  "dependencies": {
+    "node-record-lpcm16": "^1.0.5"
+  },
   "devDependencies": {}
 }
