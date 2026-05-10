@@ -1,0 +1,15 @@
+{
+  "name": "localrecorder",
+  "version": "0.1.0",
+  "description": "Local-first AI memory and workflow assistant",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "node tests/run.js",
+    "start": "node src/index.js"
+  },
+  "keywords": ["ai", "audio", "transcription", "local", "privacy"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {}
+}
