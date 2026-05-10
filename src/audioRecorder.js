@@ -24,20 +24,33 @@ class AudioRecorder {
     console.log('Recording started to', outputPath);
   }
 
-  stop() {
-    if (!this.recording) {
-      throw new Error('No recording in progress');
+  idleListen(outputPath) {
+    if (this.recording) {
+      throw new Error('Recording already in progress');
     }
 
-    this.recording.stop();
-    this.recording = null;
-    if (this.fileStream) {
-      this.fileStream.end();
-      this.fileStream = null;
-    }
+    const recordChunk = () => {
+      this.fileStream = fs.createWriteStream(outputPath, { flags: 'a' }); // append
+      this.recording = recorder.record({
+        ...this.options,
+        threshold: 0.5,
+        silence: '1.0'
+      });
+      this.recording.stream().pipe(this.fileStream);
 
-    console.log('Recording stopped');
+      this.recording.on('end', () => {
+        console.log('Silence detected, restarting idle listen');
+        this.recording = null;
+        this.fileStream.end();
+        this.fileStream = null;
+        // Restart after short delay
+        setTimeout(recordChunk, 100);
+      });
+
+      console.log('Idle listening chunk started');
+    };
+
+    recordChunk();
   }
-}
 
 module.exports = AudioRecorder;
