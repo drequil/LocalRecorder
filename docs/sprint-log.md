@@ -111,3 +111,24 @@ Next: MS-1 — sox dependency probe. After that the track proceeds linearly thro
   - Probe does not attempt to repair PATH — it tells the user to do that themselves
   - SoX 14.4.2 is the last classic release (2015); a 14.7.x fork (`sox_ng`) is available via winget. Sticking with 14.4.2 since that is what `node-record-lpcm16` targets in its tests
 - Why: the entire Phase 3A track depends on sox being callable. Failing fast with a clear message is the cheapest way to keep MS-2..MS-8 from producing confusing runtime errors
+
+## Sprint 12 (MS-2): Device Enumeration (Completed)
+- Added `src/audioDevices.js`: pure parser (`parseEnumeration`) plus a sox-spawning runner (`runSoxProbe` / `enumerateDevices`). Splits concerns so the parser is unit-testable without touching child_process
+- The probe invokes `sox -V6 -t waveaudio __localrecorder_probe__ -n`. Sox emits its full device enumeration on stderr at -V6 verbosity before failing to open the bogus device; we discard the FAIL and keep the DBUG lines
+- Regex: `/waveaudio:\s+Enumerating input device\s+(-?\d+):\s+"([^"]+)"/g`. Index -1 is reported by sox as the system default; tagged with `isDefault: true` in the result
+- Added `node src/index.js devices` subcommand. Output is a small table: a left-aligned label column ("default" or the numeric index) and the device name
+- Made `main()` in `src/index.js` async so future subcommands that need to await have a clean home; preserved synchronous-feeling exit codes
+- Tests added in `tests/audioDevices.test.js`:
+  - `parseEnumeration` extracts index/name/isDefault, returns `[]` for empty or unrelated text, tolerates CRLF + whitespace
+  - `enumerateDevices` parses a mocked spawn result, throws a friendly error on ENOENT, returns `[]` when sox emits no enumeration lines
+- Files added: `src/audioDevices.js`, `tests/audioDevices.test.js`
+- Files modified: `src/index.js`, `docs/sprint-log.md`, regenerated HTML mirrors
+- Validation:
+  - `npm test` — 15/15 passing (9 previous + 6 new)
+  - `node src/index.js devices` on this machine lists "default Microsoft Sound Mapper" and "0 Microphone (Mic-j5 WebCam JVCU1" with exit 0
+  - `node src/index.js help` updated to advertise the new subcommand
+- Known limitations:
+  - Windows WaveAudio truncates input device names to 31 characters (an OS-level multimedia API limit), so long device names like "Microphone (Mic-j5 WebCam JVCU100)" arrive without their tail. Documented behavior, not a bug in our parser
+  - The probe argument list is hardcoded for `waveaudio` (Windows-only). macOS would need `coreaudio` and Linux `alsa`/`pulseaudio`. Cross-platform device enumeration is deferred until MS-2 needs to run elsewhere
+  - We discard the FAIL line from the bogus-device open. If sox future-changes that error to a non-zero exit before emitting the enumeration, the probe could return empty; covered by the empty-list test case
+- Why: before MS-3 streams bytes off the default input, having a way to confirm "yes sox sees a mic, and yes it's the one I expect" makes hardware-level problems debuggable in seconds instead of by trial and error
