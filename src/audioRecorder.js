@@ -10,10 +10,11 @@ class AudioRecorder {
     };
     this.recording = null;
     this.fileStream = null;
+    this.idle = false;
   }
 
   start(outputPath) {
-    if (this.recording) {
+    if (this.recording || this.idle) {
       throw new Error('Recording already in progress');
     }
 
@@ -25,12 +26,14 @@ class AudioRecorder {
   }
 
   idleListen(outputPath) {
-    if (this.recording) {
+    if (this.recording || this.idle) {
       throw new Error('Recording already in progress');
     }
+    this.idle = true;
 
     const recordChunk = () => {
-      this.fileStream = fs.createWriteStream(outputPath, { flags: 'a' }); // append
+      if (!this.idle) return;
+      this.fileStream = fs.createWriteStream(outputPath, { flags: 'a' });
       this.recording = recorder.record({
         ...this.options,
         threshold: 0.5,
@@ -39,12 +42,15 @@ class AudioRecorder {
       this.recording.stream().pipe(this.fileStream);
 
       this.recording.on('end', () => {
-        console.log('Silence detected, restarting idle listen');
+        console.log('Silence detected, rotating chunk');
         this.recording = null;
-        this.fileStream.end();
-        this.fileStream = null;
-        // Restart after short delay
-        setTimeout(recordChunk, 100);
+        if (this.fileStream) {
+          this.fileStream.end();
+          this.fileStream = null;
+        }
+        if (this.idle) {
+          setTimeout(recordChunk, 100);
+        }
       });
 
       console.log('Idle listening chunk started');
@@ -54,13 +60,16 @@ class AudioRecorder {
   }
 
   stop() {
-    if (!this.recording) {
+    if (!this.recording && !this.idle) {
       throw new Error('No recording in progress');
     }
-    if (typeof this.recording.stop === 'function') {
-      this.recording.stop();
+    this.idle = false;
+    if (this.recording) {
+      if (typeof this.recording.stop === 'function') {
+        this.recording.stop();
+      }
+      this.recording = null;
     }
-    this.recording = null;
     if (this.fileStream) {
       this.fileStream.end();
       this.fileStream = null;

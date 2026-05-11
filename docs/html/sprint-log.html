@@ -108,6 +108,26 @@
 </li>
 <li>Why: rule 6 of <code>.instructions.md</code> mandates HTML mirrors every sprint; doing this once via tooling closes the debt and removes friction for future sprints</li>
 </ul>
+<h2>Sprint 9: Idle-Listen Stop Guard (Completed)</h2>
+<ul>
+<li>Closed the latent restart-after-stop bug flagged in Sprint 7&#39;s known limitations</li>
+<li>Added an <code>idle</code> lifecycle flag to <code>AudioRecorder</code> that tracks &quot;idle-listening mode&quot; independently of the current chunk&#39;s <code>recording</code> handle</li>
+<li><code>idleListen()</code> sets <code>idle=true</code>; the silence-end callback now only schedules the next chunk if <code>idle</code> is still true</li>
+<li><code>stop()</code> now accepts being called from idle mode (previously threw if <code>recording</code> was null even when the next chunk had not yet been opened); it clears <code>idle</code> first to short-circuit any in-flight restart</li>
+<li><code>start()</code> and <code>idleListen()</code> both reject being called when either <code>recording</code> or <code>idle</code> is active (closes the previously-silent overlap)</li>
+<li>Added two tests:<ul>
+<li><code>idleListen() rejects a second concurrent call</code></li>
+<li><code>stop() during idle gap prevents the next chunk from starting</code> (uses jest fake timers to simulate the 100ms silence-restart gap)</li>
+</ul>
+</li>
+<li>Files modified: <code>src/audioRecorder.js</code>, <code>tests/audioRecorder.test.js</code>, <code>docs/sprint-log.md</code>, HTML mirrors regenerated</li>
+<li>Validation: <code>npm test</code> 9/9 passing</li>
+<li>Known limitations:<ul>
+<li>Real device behavior still unverified; the new guard is wiring only. Mini-sprints in the upcoming <code>docs/sprint-plan.md</code> will validate against hardware</li>
+</ul>
+</li>
+<li>Why: Sprint 7 acknowledged this latent bug but deferred it. Fixing it now closes the catch-up debt and gives the Phase 3 work a known-good lifecycle to build on</li>
+</ul>
 <p>Next: Phase 3 - Transcription (chunked Whisper integration). A roadmap sprint to formalize Phases 3-10 in a dedicated <code>docs/sprint-plan.md</code> is also worth scheduling.</p>
 
 </body>

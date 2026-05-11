@@ -66,4 +66,19 @@
   - No anchor cross-links between mirrored docs yet; each HTML file is standalone
 - Why: rule 6 of `.instructions.md` mandates HTML mirrors every sprint; doing this once via tooling closes the debt and removes friction for future sprints
 
+## Sprint 9: Idle-Listen Stop Guard (Completed)
+- Closed the latent restart-after-stop bug flagged in Sprint 7's known limitations
+- Added an `idle` lifecycle flag to `AudioRecorder` that tracks "idle-listening mode" independently of the current chunk's `recording` handle
+- `idleListen()` sets `idle=true`; the silence-end callback now only schedules the next chunk if `idle` is still true
+- `stop()` now accepts being called from idle mode (previously threw if `recording` was null even when the next chunk had not yet been opened); it clears `idle` first to short-circuit any in-flight restart
+- `start()` and `idleListen()` both reject being called when either `recording` or `idle` is active (closes the previously-silent overlap)
+- Added two tests:
+  - `idleListen() rejects a second concurrent call`
+  - `stop() during idle gap prevents the next chunk from starting` (uses jest fake timers to simulate the 100ms silence-restart gap)
+- Files modified: `src/audioRecorder.js`, `tests/audioRecorder.test.js`, `docs/sprint-log.md`, HTML mirrors regenerated
+- Validation: `npm test` 9/9 passing
+- Known limitations:
+  - Real device behavior still unverified; the new guard is wiring only. Mini-sprints in the upcoming `docs/sprint-plan.md` will validate against hardware
+- Why: Sprint 7 acknowledged this latent bug but deferred it. Fixing it now closes the catch-up debt and gives the Phase 3 work a known-good lifecycle to build on
+
 Next: Phase 3 - Transcription (chunked Whisper integration). A roadmap sprint to formalize Phases 3-10 in a dedicated `docs/sprint-plan.md` is also worth scheduling.

@@ -78,4 +78,31 @@ describe('AudioRecorder', () => {
     const lastCall = recorderLib.record.mock.calls.at(-1)[0];
     expect(lastCall).toMatchObject({ threshold: 0.5, silence: '1.0' });
   });
+
+  test('idleListen() rejects a second concurrent call', () => {
+    recorder.idleListen('idle.wav');
+    expect(() => recorder.idleListen('idle2.wav')).toThrow('Recording already in progress');
+  });
+
+  test('stop() during idle gap prevents the next chunk from starting', () => {
+    jest.useFakeTimers();
+    try {
+      recorder.idleListen('idle.wav');
+      const onCalls = recorderLib.__lastRecording.on.mock.calls;
+      const endHandler = onCalls.find(([event]) => event === 'end');
+      expect(endHandler).toBeDefined();
+
+      recorder.stop();
+
+      recorderLib.record.mockClear();
+      endHandler[1]();
+      jest.advanceTimersByTime(500);
+
+      expect(recorderLib.record).not.toHaveBeenCalled();
+      expect(recorder.idle).toBe(false);
+      expect(recorder.recording).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });
