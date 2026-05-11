@@ -94,3 +94,20 @@
 - Why: the user asked for a concrete plan after the catch-up sprints. Writing the plan as a committed doc means the next sessions resume from a written shared understanding rather than from chat history
 
 Next: MS-1 — sox dependency probe. After that the track proceeds linearly through MS-2..MS-8.
+
+## Sprint 11 (MS-1): Sox Dependency Probe (Completed)
+- Added `tools/check-audio-deps.js`: spawns `sox --version`, handles `ENOENT` by printing platform-specific install hints (winget / chocolatey / sourceforge for Windows, brew for macOS, apt/dnf/pacman for Linux), and exits non-zero so CI / npm script chains can react
+- Added `npm run audio:check` script
+- Expanded the README Setup section with a numbered list including the audio prereq step, plus a dedicated "Audio Capture Prerequisites" subsection with per-OS install commands
+- Files added: `tools/check-audio-deps.js`
+- Files modified: `package.json`, `README.md`, `docs/sprint-log.md`, regenerated HTML mirrors
+- Validation:
+  - `node --check tools/check-audio-deps.js` clean
+  - Ran `npm run audio:check` with sox absent: exited 1, printed install hints (matches MS-1 acceptance criteria for the FAIL path)
+  - Installed `ChrisBagwell.SoX` v14.4.2 via winget; refreshed PATH; re-ran `npm run audio:check`: exited 0, reported `sox: SoX v14.4.2` (matches OK path)
+  - `npm test` 9/9 still passing (no source changes)
+- Known limitations:
+  - Probe only detects `sox` itself, not `sox-plugins` or codec libraries (irrelevant for plain WAV capture, may matter later for MP3/Opus output)
+  - Probe does not attempt to repair PATH — it tells the user to do that themselves
+  - SoX 14.4.2 is the last classic release (2015); a 14.7.x fork (`sox_ng`) is available via winget. Sticking with 14.4.2 since that is what `node-record-lpcm16` targets in its tests
+- Why: the entire Phase 3A track depends on sox being callable. Failing fast with a clear message is the cheapest way to keep MS-2..MS-8 from producing confusing runtime errors

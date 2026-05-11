@@ -27,7 +27,43 @@ A local-first AI memory and workflow assistant that records audio, transcribes i
 
 1. Ensure Node.js is installed (Windows-compatible).
 2. Run `npm install` to install dependencies.
-3. See individual modules for usage.
+3. Install **sox** — required for audio capture (see Audio Capture Prerequisites below).
+4. Run `npm run audio:check` to verify sox is callable from this project.
+5. See individual modules for usage.
+
+## Audio Capture Prerequisites
+
+LocalRecorder uses [`node-record-lpcm16`](https://www.npmjs.com/package/node-record-lpcm16), which shells out to **sox** for the actual audio capture. Sox is not an npm package and must be installed separately and placed on your `PATH`.
+
+Quick verification:
+
+```bash
+npm run audio:check
+```
+
+That script prints the detected sox version on success, or platform-specific install hints on failure.
+
+### Windows
+
+- `winget search sox` to find the current package id, then `winget install <id>`
+- or `choco install sox.portable`
+- or download manually from <https://sourceforge.net/projects/sox/files/sox/>
+
+After install, ensure the sox folder (typically `C:\Program Files (x86)\sox-X.Y.Z\`) is on your `PATH`, then open a new shell so the change takes effect.
+
+### macOS
+
+```bash
+brew install sox
+```
+
+### Linux
+
+```bash
+sudo apt install sox       # Debian/Ubuntu
+sudo dnf install sox       # Fedora
+sudo pacman -S sox         # Arch
+```
 
 ## Development
 

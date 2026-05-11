@@ -56,8 +56,31 @@
 <ol>
 <li>Ensure Node.js is installed (Windows-compatible).</li>
 <li>Run <code>npm install</code> to install dependencies.</li>
+<li>Install <strong>sox</strong> — required for audio capture (see Audio Capture Prerequisites below).</li>
+<li>Run <code>npm run audio:check</code> to verify sox is callable from this project.</li>
 <li>See individual modules for usage.</li>
 </ol>
+<h2>Audio Capture Prerequisites</h2>
+<p>LocalRecorder uses <a href="https://www.npmjs.com/package/node-record-lpcm16"><code>node-record-lpcm16</code></a>, which shells out to <strong>sox</strong> for the actual audio capture. Sox is not an npm package and must be installed separately and placed on your <code>PATH</code>.</p>
+<p>Quick verification:</p>
+<pre><code class="language-bash">npm run audio:check
+</code></pre>
+<p>That script prints the detected sox version on success, or platform-specific install hints on failure.</p>
+<h3>Windows</h3>
+<ul>
+<li><code>winget search sox</code> to find the current package id, then <code>winget install &lt;id&gt;</code></li>
+<li>or <code>choco install sox.portable</code></li>
+<li>or download manually from <a href="https://sourceforge.net/projects/sox/files/sox/">https://sourceforge.net/projects/sox/files/sox/</a></li>
+</ul>
+<p>After install, ensure the sox folder (typically <code>C:\Program Files (x86)\sox-X.Y.Z\</code>) is on your <code>PATH</code>, then open a new shell so the change takes effect.</p>
+<h3>macOS</h3>
+<pre><code class="language-bash">brew install sox
+</code></pre>
+<h3>Linux</h3>
+<pre><code class="language-bash">sudo apt install sox       # Debian/Ubuntu
+sudo dnf install sox       # Fedora
+sudo pacman -S sox         # Arch
+</code></pre>
 <h2>Development</h2>
 <p>Follow MDM (Markdown-Driven Development) workflow with incremental sprints. Each sprint ends with commit, validation, and documentation update.</p>
 

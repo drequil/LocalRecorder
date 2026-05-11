@@ -6,7 +6,8 @@
   "scripts": {
     "test": "jest --ci --forceExit",
     "start": "node src/index.js",
-    "docs:html": "node tools/build-html.js"
+    "docs:html": "node tools/build-html.js",
+    "audio:check": "node tools/check-audio-deps.js"
   },
   "keywords": [
     "ai",
