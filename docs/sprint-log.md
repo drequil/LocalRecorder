@@ -28,4 +28,12 @@
 - Updated test script
 - Committed changes
 
-Next: Phase 3 - Transcription
+## Sprint 6: As-Directed Pushes (Completed)
+- Relaxed `.instructions.md` rules 2 and 3 to allow user-authorized remote configuration and pushes
+- Added an "As-Directed Pushes" subsection with guardrails (confirm remote/branch, no force/all-branch pushes, no remote reconfiguration without direction)
+- Updated the Commit Locally section to mirror the new policy
+- Files modified: `.instructions.md`, `docs/sprint-log.md`
+- Known limitations: HTML doc mirror (rule 6) not yet generated for any sprint; tracked as deferred debt
+- Why: a public GitHub remote (`origin/develop`) was set up out-of-band per explicit user direction; the rules needed to reflect that this is now permitted when directed
+
+Next: Phase 3 - Transcription (preceded by a stabilization sprint to fix the broken `src/audioRecorder.js`)
