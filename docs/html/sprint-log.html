@@ -128,7 +128,20 @@
 </li>
 <li>Why: Sprint 7 acknowledged this latent bug but deferred it. Fixing it now closes the catch-up debt and gives the Phase 3 work a known-good lifecycle to build on</li>
 </ul>
-<p>Next: Phase 3 - Transcription (chunked Whisper integration). A roadmap sprint to formalize Phases 3-10 in a dedicated <code>docs/sprint-plan.md</code> is also worth scheduling.</p>
+<h2>Sprint 10: Mini-Sprint Plan for Working Audio (Completed)</h2>
+<ul>
+<li>Created <code>docs/sprint-plan.md</code> enumerating eight tightly-scoped mini-sprints (MS-1 through MS-8) that take audio capture from &quot;code compiles&quot; to &quot;real WAVs from a real mic on this Windows box&quot;</li>
+<li>Ordered as listening first (MS-1 sox probe, MS-2 device enumeration, MS-3 live level meter) then recording (MS-4 WAV output, MS-5 fixed duration, MS-6 rolling idle chunks, MS-7 Whisper-aligned defaults, MS-8 chunk metadata sidecars)</li>
+<li>Each mini-sprint specifies: goal, files touched, concrete steps, validation procedure, acceptance criteria, rollback approach, and risk notes</li>
+<li>Documents the two known-broken aspects of current audio code that need fixing during the track: <code>start()</code> writes raw PCM not WAV; <code>idleListen()</code> appends multiple silence-chunks to one file</li>
+<li>Includes an explicit out-of-scope list (transcription, summarization, search, GPU, etc.) so the next planning pass starts from a clean boundary</li>
+<li>The HTML generator (Sprint 8) already had <code>docs/sprint-plan.md</code> pre-wired as an optional source, so this turn picked it up automatically</li>
+<li>Files added: <code>docs/sprint-plan.md</code>, <code>docs/html/sprint-plan.html</code></li>
+<li>Files modified: <code>docs/sprint-log.md</code>, plus regenerated <code>docs/html/sprint-log.html</code> and <code>docs/html/instructions.html</code> from the same <code>npm run docs:html</code> invocation</li>
+<li>Validation: <code>npm run docs:html</code> reports <code>ok</code> for all sources including the new plan; <code>npm test</code> 9/9 passing (no code changes this sprint)</li>
+<li>Why: the user asked for a concrete plan after the catch-up sprints. Writing the plan as a committed doc means the next sessions resume from a written shared understanding rather than from chat history</li>
+</ul>
+<p>Next: MS-1 — sox dependency probe. After that the track proceeds linearly through MS-2..MS-8.</p>
 
 </body>
 </html>

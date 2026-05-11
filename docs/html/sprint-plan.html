@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LocalRecorder — Sprint Plan</title>
+  <style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    max-width: 760px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    line-height: 1.55;
+  }
+  h1, h2, h3, h4 { line-height: 1.25; }
+  h1 { border-bottom: 1px solid #8884; padding-bottom: 0.3rem; }
+  h2 { border-bottom: 1px solid #8882; padding-bottom: 0.2rem; margin-top: 2rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+  pre code { display: block; padding: 0.75rem; overflow-x: auto; background: #8881; border-radius: 4px; }
+  :not(pre) > code { background: #8881; padding: 0.1rem 0.3rem; border-radius: 3px; }
+  table { border-collapse: collapse; }
+  th, td { border: 1px solid #8884; padding: 0.4rem 0.6rem; }
+  blockquote { border-left: 3px solid #8884; padding-left: 0.75rem; color: #888; }
+  hr { border: none; border-top: 1px solid #8884; }
+  .meta { color: #888; font-size: 0.85em; margin-bottom: 1.5rem; }
+  .meta a { color: inherit; }
+</style>
+</head>
+<body>
+  <p class="meta">Generated from <code>docs/sprint-plan.md</code> &middot; <a href="../../docs/sprint-plan.md">view source</a></p>
+<h1>Sprint Plan — Phase 3 Track A: Working Audio</h1>
+<p>Goal of this track: take the AudioRecorder from &quot;code that parses and tests pass with mocks&quot; to <strong>&quot;I can plug in a mic, run a command, and (1) see live audio levels, then (2) save a playable WAV file&quot;</strong> — verified on the actual Windows machine this project lives on.</p>
+<p>Sprints 1–9 built the scaffolding and stabilized it. Nothing has yet been validated against real hardware. The mini-sprints below are intentionally tiny so each one ends in a runnable, verifiable artifact rather than weeks of integrated work.</p>
+<h2>Ordering principle</h2>
+<p>Listening before recording, for three reasons:</p>
+<ol>
+<li>Listening proves the input device works without committing files to disk.</li>
+<li>Listening surfaces auth/dep problems (sox missing, device permission, wrong default input) cheaply.</li>
+<li>Recording is mechanically a superset of listening — same pipeline, plus a destination file and a finalization step.</li>
+</ol>
+<h2>Constraint inventory (known before we start)</h2>
+<ul>
+<li><code>node-record-lpcm16</code> v1.0.1 on Windows shells out to <strong>sox</strong> (<code>sox.exe</code>). Sox is not bundled by npm; it must be on <code>PATH</code>.</li>
+<li>The current <code>start()</code> pipes the raw stream from <code>recorder.record()</code> straight into a file with no <code>audioType</code> set. This produces <strong>raw PCM</strong>, not a playable WAV file. That has to change before recording is &quot;working&quot;.</li>
+<li>The current <code>idleListen()</code> appends all silence-delimited chunks to a single file path with <code>flags: &#39;a&#39;</code>. Even after the WAV fix, this would concatenate multiple WAV headers into one file. Rolling per-chunk filenames are required.</li>
+<li>Sox on Windows historically installs without registering itself on <code>PATH</code>. Users will likely need to add <code>C:\Program Files (x86)\sox-X.Y.Z\</code> to <code>PATH</code> themselves.</li>
+</ul>
+<h2>Sprint map</h2>
+<h3>Phase 3A — Listening pipeline (prove input)</h3>
+<table>
+<thead>
+<tr>
+<th>Sprint</th>
+<th>Title</th>
+<th>Outcome</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MS-1</td>
+<td>Sox dependency probe</td>
+<td><code>npm run audio:check</code> reports sox version or a clean install message</td>
+</tr>
+<tr>
+<td>MS-2</td>
+<td>Device enumeration</td>
+<td><code>node src/index.js devices</code> lists detected audio inputs</td>
+</tr>
+<tr>
+<td>MS-3</td>
+<td>Live level meter</td>
+<td><code>node src/index.js listen</code> prints a live peak-amplitude bar</td>
+</tr>
+</tbody></table>
+<h3>Phase 3B — Recording pipeline (prove output)</h3>
+<table>
+<thead>
+<tr>
+<th>Sprint</th>
+<th>Title</th>
+<th>Outcome</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MS-4</td>
+<td>WAV output from <code>start()</code></td>
+<td><code>node src/index.js record out.wav</code> + Ctrl+C produces a playable WAV</td>
+</tr>
+<tr>
+<td>MS-5</td>
+<td>Fixed-duration record</td>
+<td><code>record --duration 5 out.wav</code> writes exactly ~5 s of audio</td>
+</tr>
+<tr>
+<td>MS-6</td>
+<td>Rolling idle chunks</td>
+<td><code>idle &lt;dir&gt;</code> writes timestamped per-silence WAV files in <code>&lt;dir&gt;</code></td>
+</tr>
+<tr>
+<td>MS-7</td>
+<td>Whisper-aligned defaults</td>
+<td>Default capture is 16 kHz mono 16-bit signed PCM in WAV</td>
+</tr>
+<tr>
+<td>MS-8</td>
+<td>Chunk metadata sidecars</td>
+<td>Each idle-mode WAV gets a sidecar <code>.json</code> with start, end, peak</td>
+</tr>
+</tbody></table>
+<p>Eight mini-sprints; each should be ~30–90 minutes of work. After MS-3 you can demo &quot;listening&quot;. After MS-4 you can demo &quot;recording&quot;. After MS-8 the audio capture pipeline is ready to hand off to a transcription sprint.</p>
+<hr>
+<h2>Mini-sprint details</h2>
+<h3>MS-1 — Sox dependency probe</h3>
+<ul>
+<li><strong>Goal:</strong> detect whether sox is callable from this Node process and surface a friendly install message if not.</li>
+<li><strong>Touches:</strong> new <code>tools/check-audio-deps.js</code>, new <code>npm run audio:check</code> script in <code>package.json</code>, README install section appended.</li>
+<li><strong>Steps:</strong><ol>
+<li>Spawn <code>sox --version</code> via <code>child_process.spawn</code>.</li>
+<li>Print version + resolved path on success.</li>
+<li>On <code>ENOENT</code>, print install hints for Windows (winget, chocolatey, manual <code>sourceforge.net/projects/sox/files/sox/</code> link) and exit with a non-zero code.</li>
+</ol>
+</li>
+<li><strong>Validation:</strong> run on this machine before and after installing sox. Both code paths produce useful output.</li>
+<li><strong>Acceptance criteria:</strong> with sox installed, <code>npm run audio:check</code> exits 0 and shows the version. Without, exits non-zero and tells the user what to do.</li>
+<li><strong>Rollback:</strong> delete two new files and the script entry; the rest of the project is unaffected.</li>
+<li><strong>Risk:</strong> sox install may require admin rights and <code>PATH</code> edit; document this honestly.</li>
+</ul>
+<h3>MS-2 — Device enumeration</h3>
+<ul>
+<li><strong>Goal:</strong> list audio input devices visible to sox.</li>
+<li><strong>Touches:</strong> <code>src/index.js</code> (new <code>devices</code> subcommand), no library changes.</li>
+<li><strong>Steps:</strong><ol>
+<li>Add <code>devices</code> to the CLI dispatch.</li>
+<li>Shell out to <code>sox -V6 -n -t waveaudio &quot;?&quot; -n</code> (or platform-appropriate query) to enumerate Windows WaveAudio devices, parse stderr.</li>
+<li>Print a numbered list with name and any reported sample-rate hint.</li>
+</ol>
+</li>
+<li><strong>Validation:</strong> runs cleanly on this machine; output includes the default input.</li>
+<li><strong>Acceptance criteria:</strong> at least one device listed when a microphone is connected; exit 0.</li>
+<li><strong>Rollback:</strong> remove the new subcommand block.</li>
+<li><strong>Risk:</strong> sox device-listing syntax differs across builds; if the chosen incantation fails, fall back to printing sox&#39;s raw <code>-V6</code> diagnostics.</li>
+</ul>
+<h3>MS-3 — Live level meter</h3>
+<ul>
+<li><strong>Goal:</strong> prove the audio input pipeline end-to-end without writing any file, by displaying live peak amplitude.</li>
+<li><strong>Touches:</strong> <code>src/audioRecorder.js</code> (new <code>listen(onSample)</code> method that yields PCM buffers but writes no file), <code>src/index.js</code> (new <code>listen</code> subcommand), tests for the new method.</li>
+<li><strong>Steps:</strong><ol>
+<li>Add <code>AudioRecorder.listen(handler)</code> that calls <code>recorder.record(this.options)</code>, attaches <code>stream().on(&#39;data&#39;, handler)</code>, and returns a <code>stop</code> function.</li>
+<li>CLI computes peak amplitude per chunk: <code>Math.max(...sampleValues)</code> (interpret as 16-bit signed little-endian).</li>
+<li>Render a 40-column ASCII bar, throttled to every 100 ms.</li>
+<li>Ctrl+C cleanly stops the listen stream.</li>
+</ol>
+</li>
+<li><strong>Validation:</strong> run <code>node src/index.js listen</code> and clap — the bar visibly responds.</li>
+<li><strong>Acceptance criteria:</strong> non-zero levels observed on at least one audio event; Ctrl+C exits cleanly without sox processes left behind (verify with Task Manager / <code>Get-Process sox</code>).</li>
+<li><strong>Rollback:</strong> revert the new method + subcommand. Existing <code>start</code>/<code>idleListen</code>/<code>stop</code> untouched.</li>
+<li><strong>Risk:</strong> if <code>node-record-lpcm16</code> emits in a different endianness or width than expected on Windows, the meter will look stuck or saturated. Mitigate by also printing raw min/max for one chunk per second during debugging.</li>
+</ul>
+<hr>
+<h3>MS-4 — WAV output from <code>start()</code></h3>
+<ul>
+<li><strong>Goal:</strong> make <code>record &lt;file&gt;</code> produce a real playable WAV.</li>
+<li><strong>Touches:</strong> <code>src/audioRecorder.js</code> (pass <code>audioType: &#39;wav&#39;</code> and let sox write the file rather than piping raw PCM to a Node stream), tests adjusted.</li>
+<li><strong>Steps:</strong><ol>
+<li>Change <code>start()</code> to pass <code>audioType: &#39;wav&#39;</code> to <code>recorder.record()</code>. Confirm in node-record-lpcm16 source that this routes through sox&#39;s wav writer with proper RIFF header.</li>
+<li>Decide: keep piping to <code>fileStream</code> (sox already wrote header on stream start) <strong>or</strong> have sox write the file directly (simpler but loses Node-level flush control). Pick the simpler one (sox writes to its own stdout, Node pipes to file).</li>
+<li>Update tests: <code>fs.createWriteStream</code> still mocked; assert sox is invoked with <code>audioType: &#39;wav&#39;</code>.</li>
+</ol>
+</li>
+<li><strong>Validation:</strong> record ~3 s, open the file in Windows Media Player / Groove, hear playback.</li>
+<li><strong>Acceptance criteria:</strong> the WAV file&#39;s first 4 bytes are <code>RIFF</code>; <code>data</code> chunk size &gt; 0; audible content on playback.</li>
+<li><strong>Rollback:</strong> revert the option change; the file goes back to raw PCM (broken-but-known state).</li>
+<li><strong>Risk:</strong> Ctrl+C may truncate the WAV before sox writes the data-size header, leaving an invalid file. MS-5 partly addresses this by using sox&#39;s own duration termination instead of SIGINT.</li>
+</ul>
+<h3>MS-5 — Fixed-duration record</h3>
+<ul>
+<li><strong>Goal:</strong> <code>record --duration 5 out.wav</code> produces exactly ~5 seconds of valid WAV without needing Ctrl+C.</li>
+<li><strong>Touches:</strong> <code>src/index.js</code> (parse <code>--duration</code>), <code>src/audioRecorder.js</code> (optional <code>durationSeconds</code> in options or a setTimeout-driven stop in the CLI), tests.</li>
+<li><strong>Steps:</strong><ol>
+<li>CLI parses <code>--duration &lt;n&gt;</code> (positive number).</li>
+<li>After <code>recorder.start(outputPath)</code>, set <code>setTimeout(() =&gt; { recorder.stop(); process.exit(0); }, n * 1000)</code>.</li>
+<li>Test that the CLI dispatch handles <code>--duration</code> argument shape (unit-level only; no real recording).</li>
+</ol>
+</li>
+<li><strong>Validation:</strong> <code>record --duration 5 out.wav</code> produces a file whose reported duration is between 4.8 and 5.5 seconds (check via sox: <code>sox out.wav -n stat</code>).</li>
+<li><strong>Acceptance criteria:</strong> duration in range, file playable, process exits 0.</li>
+<li><strong>Rollback:</strong> drop the flag and the setTimeout block.</li>
+<li><strong>Risk:</strong> sox latency on first sample may make short durations (≤1 s) record less than expected; document the lower bound.</li>
+</ul>
+<h3>MS-6 — Rolling idle chunks</h3>
+<ul>
+<li><strong>Goal:</strong> replace the broken single-file append behavior of <code>idleListen</code> with one WAV file per silence-delimited chunk, named with an ISO timestamp.</li>
+<li><strong>Touches:</strong> <code>src/audioRecorder.js</code> (<code>idleListen(directory, options)</code> signature change — accepts a directory, generates per-chunk filenames internally), <code>src/index.js</code>, tests adjusted.</li>
+<li><strong>Steps:</strong><ol>
+<li>Change <code>idleListen(outputPath)</code> to <code>idleListen(directory)</code>.</li>
+<li>For each chunk, build a filename <code>chunk-YYYYMMDD-HHMMSS.wav</code> (UTC; padded with <code>Date#toISOString</code> slicing).</li>
+<li>Pass <code>audioType: &#39;wav&#39;</code> per chunk (each chunk is its own complete WAV).</li>
+<li>Update CLI <code>idle &lt;directory&gt;</code> accordingly.</li>
+<li>Update existing idleListen tests; the test assertion that previously expected <code>flags: &#39;a&#39;</code> becomes &quot;createWriteStream called with a chunk-*.wav path inside the directory&quot;.</li>
+</ol>
+</li>
+<li><strong>Validation:</strong> run <code>idle ./recordings/</code>, speak, pause, speak again. Two or more WAV files appear, each playable.</li>
+<li><strong>Acceptance criteria:</strong> at least 2 files produced from at least 2 distinct vocal bursts; no duplicate filenames; no leftover sox processes after Ctrl+C.</li>
+<li><strong>Rollback:</strong> restore single-file <code>outputPath</code> signature; the broken-but-stable Sprint 9 state is one revert away.</li>
+<li><strong>Risk:</strong> timestamp collisions if two chunks start within the same second; mitigate by appending a counter on collision.</li>
+</ul>
+<h3>MS-7 — Whisper-aligned defaults</h3>
+<ul>
+<li><strong>Goal:</strong> capture format defaults to 16 kHz mono 16-bit signed PCM in WAV (<code>bitwidth: 16</code>, <code>channels: 1</code>, <code>sampleRate: 16000</code>, <code>audioType: &#39;wav&#39;</code>, <code>encoding: &#39;signed-integer&#39;</code>), so Whisper consumes recordings with no resampling.</li>
+<li><strong>Touches:</strong> <code>src/audioRecorder.js</code> default options block, tests.</li>
+<li><strong>Steps:</strong><ol>
+<li>Update default options object.</li>
+<li>Add a test that asserts the defaults are exactly the Whisper-compatible set.</li>
+</ol>
+</li>
+<li><strong>Validation:</strong> record a 2-second sample, run <code>sox out.wav -n stat</code> and confirm the reported rate/channels/depth.</li>
+<li><strong>Acceptance criteria:</strong> sox stat reports 16000 Hz, 1 channel, 16-bit signed.</li>
+<li><strong>Rollback:</strong> revert the defaults block.</li>
+<li><strong>Risk:</strong> none of significance; this is metadata.</li>
+</ul>
+<h3>MS-8 — Chunk metadata sidecars</h3>
+<ul>
+<li><strong>Goal:</strong> for each idle-mode WAV file, write a companion <code>.json</code> capturing start ISO time, end ISO time, duration ms, and peak amplitude.</li>
+<li><strong>Touches:</strong> <code>src/audioRecorder.js</code> (instrument the chunk lifecycle), tests, optional new helper module.</li>
+<li><strong>Steps:</strong><ol>
+<li>On chunk start, record <code>chunkStart = new Date()</code>.</li>
+<li>Tap the audio stream to compute running peak (reuse code from MS-3).</li>
+<li>On chunk end, write <code>&lt;chunk-name&gt;.json</code> with <code>{ start, end, durationMs, peak }</code>.</li>
+<li>Tests assert sidecar shape using the mock <code>fs.writeFile</code>/<code>createWriteStream</code>.</li>
+</ol>
+</li>
+<li><strong>Validation:</strong> record an idle session, open one of the JSON sidecars, confirm values look sane (duration matches the WAV&#39;s, peak between 0 and 1).</li>
+<li><strong>Acceptance criteria:</strong> every WAV has a matching JSON; durations agree within 100 ms; peak ∈ [0,1].</li>
+<li><strong>Rollback:</strong> remove the instrumentation; WAVs continue to work standalone.</li>
+<li><strong>Risk:</strong> synchronous JSON writes on every chunk could stutter under heavy load. Move to async writes if observed; not a concern at the volumes expected here.</li>
+</ul>
+<hr>
+<h2>Cross-cutting checklist for every mini-sprint</h2>
+<p>Per <code>.instructions.md</code> workflow rules:</p>
+<ol>
+<li><code>git status</code> clean before starting; pull if anything sneaks onto origin.</li>
+<li>Smallest useful diff; no unrelated refactors.</li>
+<li><code>npm test</code> and (where the sprint adds binary tooling) the new validation command both pass.</li>
+<li>Update <code>docs/sprint-log.md</code> with what / why / files / known limitations.</li>
+<li><code>npm run docs:html</code> to regenerate HTML mirrors.</li>
+<li>Atomic commit named <code>[sprint-N] &lt;concise&gt;</code>.</li>
+<li>Push to <code>origin/develop</code> per the as-directed-push rule, after local validation.</li>
+</ol>
+<h2>Explicitly out of scope for this track</h2>
+<p>The following are <strong>not</strong> part of the eight mini-sprints above. Each is its own future track:</p>
+<ul>
+<li>Whisper transcription (chunked or otherwise)</li>
+<li>Local summarization (any tier of the hour → quarter hierarchy)</li>
+<li>Markdown persistence of transcripts</li>
+<li>Search index over summaries</li>
+<li>Heat/trend analysis</li>
+<li>GPU acceleration of any kind</li>
+<li>Human review UI</li>
+<li>Rolling audio deletion after transcript+summary persistence</li>
+</ul>
+<p>These will be planned in their own dedicated sprint-plan tracks once Phase 3 Track A is green.</p>
+<h2>Definition of &quot;done&quot; for the whole track</h2>
+<p>The track is complete when, on this Windows machine, <strong>all of the following are true with no extra setup beyond what the README documents</strong>:</p>
+<ul>
+<li><code>npm run audio:check</code> reports a sox version.</li>
+<li><code>node src/index.js devices</code> lists at least the default mic.</li>
+<li><code>node src/index.js listen</code> shows a visibly-changing level bar that responds to ambient sound.</li>
+<li><code>node src/index.js record --duration 5 demo.wav</code> produces a 5-second playable WAV.</li>
+<li><code>node src/index.js idle ./recordings/</code> produces one valid WAV (plus matching JSON sidecar) per silence-delimited vocal burst.</li>
+<li><code>npm test</code> is green and tests assert the new lifecycle invariants (Whisper-aligned defaults, sidecar shape, no double-start).</li>
+</ul>
+
+</body>
+</html>

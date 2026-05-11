@@ -81,4 +81,16 @@
   - Real device behavior still unverified; the new guard is wiring only. Mini-sprints in the upcoming `docs/sprint-plan.md` will validate against hardware
 - Why: Sprint 7 acknowledged this latent bug but deferred it. Fixing it now closes the catch-up debt and gives the Phase 3 work a known-good lifecycle to build on
 
-Next: Phase 3 - Transcription (chunked Whisper integration). A roadmap sprint to formalize Phases 3-10 in a dedicated `docs/sprint-plan.md` is also worth scheduling.
+## Sprint 10: Mini-Sprint Plan for Working Audio (Completed)
+- Created `docs/sprint-plan.md` enumerating eight tightly-scoped mini-sprints (MS-1 through MS-8) that take audio capture from "code compiles" to "real WAVs from a real mic on this Windows box"
+- Ordered as listening first (MS-1 sox probe, MS-2 device enumeration, MS-3 live level meter) then recording (MS-4 WAV output, MS-5 fixed duration, MS-6 rolling idle chunks, MS-7 Whisper-aligned defaults, MS-8 chunk metadata sidecars)
+- Each mini-sprint specifies: goal, files touched, concrete steps, validation procedure, acceptance criteria, rollback approach, and risk notes
+- Documents the two known-broken aspects of current audio code that need fixing during the track: `start()` writes raw PCM not WAV; `idleListen()` appends multiple silence-chunks to one file
+- Includes an explicit out-of-scope list (transcription, summarization, search, GPU, etc.) so the next planning pass starts from a clean boundary
+- The HTML generator (Sprint 8) already had `docs/sprint-plan.md` pre-wired as an optional source, so this turn picked it up automatically
+- Files added: `docs/sprint-plan.md`, `docs/html/sprint-plan.html`
+- Files modified: `docs/sprint-log.md`, plus regenerated `docs/html/sprint-log.html` and `docs/html/instructions.html` from the same `npm run docs:html` invocation
+- Validation: `npm run docs:html` reports `ok` for all sources including the new plan; `npm test` 9/9 passing (no code changes this sprint)
+- Why: the user asked for a concrete plan after the catch-up sprints. Writing the plan as a committed doc means the next sessions resume from a written shared understanding rather than from chat history
+
+Next: MS-1 — sox dependency probe. After that the track proceeds linearly through MS-2..MS-8.
