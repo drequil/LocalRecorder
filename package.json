@@ -5,15 +5,23 @@
   "main": "src/index.js",
   "scripts": {
     "test": "jest --ci --forceExit",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "docs:html": "node tools/build-html.js"
   },
-  "keywords": ["ai", "audio", "transcription", "local", "privacy"],
+  "keywords": [
+    "ai",
+    "audio",
+    "transcription",
+    "local",
+    "privacy"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "node-record-lpcm16": "^1.0.1"
   },
   "devDependencies": {
-    "jest": "^29.7.0"
+    "jest": "^29.7.0",
+    "marked": "^18.0.3"
   }
 }

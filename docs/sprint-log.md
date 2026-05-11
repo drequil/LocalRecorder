@@ -52,4 +52,18 @@
   - Tests mock both the recording library and `fs`, so they validate wiring but not real audio capture; integration coverage will need a real-device sprint later
 - Why: the codebase committed at end of Phase 2 did not parse, had no entry file, had tests that referenced an undefined method, and pinned a nonexistent dep version. This sprint makes Phase 2 honestly complete before Phase 3 work begins
 
+## Sprint 8: HTML Mirror Catch-Up (Completed)
+- Paid down workflow rule 6 debt that had accumulated for seven sprints (no HTML mirrors had been generated for any prior sprint)
+- Added `tools/build-html.js`: small Node generator that converts the project's markdown docs into self-contained HTML using `marked` (no JS framework, single inline `<style>` block, light/dark color-scheme support)
+- Added `npm run docs:html` script so future sprints can regenerate mirrors in one command
+- Added `marked` (^16.x line as resolved by npm) to `devDependencies` only; no runtime impact
+- Generated initial mirrors at `docs/html/README.html`, `docs/html/instructions.html`, `docs/html/sprint-log.html`. A future `docs/sprint-plan.md` is wired in as an optional source so it auto-mirrors when created
+- Files added: `tools/build-html.js`, `docs/html/README.html`, `docs/html/instructions.html`, `docs/html/sprint-log.html`
+- Files modified: `package.json`, `package-lock.json`, `docs/sprint-log.md`
+- Validation: `npm run docs:html` reports `ok` for all required sources; `npm test` 7/7 passing
+- Known limitations:
+  - Generator is one-way (md -> html). It does not roundtrip edits made to HTML
+  - No anchor cross-links between mirrored docs yet; each HTML file is standalone
+- Why: rule 6 of `.instructions.md` mandates HTML mirrors every sprint; doing this once via tooling closes the debt and removes friction for future sprints
+
 Next: Phase 3 - Transcription (chunked Whisper integration). A roadmap sprint to formalize Phases 3-10 in a dedicated `docs/sprint-plan.md` is also worth scheduling.

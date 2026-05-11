@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LocalRecorder — Sprint Log</title>
+  <style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    max-width: 760px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    line-height: 1.55;
+  }
+  h1, h2, h3, h4 { line-height: 1.25; }
+  h1 { border-bottom: 1px solid #8884; padding-bottom: 0.3rem; }
+  h2 { border-bottom: 1px solid #8882; padding-bottom: 0.2rem; margin-top: 2rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+  pre code { display: block; padding: 0.75rem; overflow-x: auto; background: #8881; border-radius: 4px; }
+  :not(pre) > code { background: #8881; padding: 0.1rem 0.3rem; border-radius: 3px; }
+  table { border-collapse: collapse; }
+  th, td { border: 1px solid #8884; padding: 0.4rem 0.6rem; }
+  blockquote { border-left: 3px solid #8884; padding-left: 0.75rem; color: #888; }
+  hr { border: none; border-top: 1px solid #8884; }
+  .meta { color: #888; font-size: 0.85em; margin-bottom: 1.5rem; }
+  .meta a { color: inherit; }
+</style>
+</head>
+<body>
+  <p class="meta">Generated from <code>docs/sprint-log.md</code> &middot; <a href="../../docs/sprint-log.md">view source</a></p>
+<h1>Sprint Log</h1>
+<h2>Sprint 1: Project Setup (Completed)</h2>
+<ul>
+<li>Created src/, docs/, tests/ directories</li>
+<li>Added README.md with goals and principles</li>
+<li>Initialized package.json for Node.js</li>
+<li>Ran npm install successfully</li>
+<li>Committed changes</li>
+</ul>
+<h2>Sprint 2: Audio Library Selection (Completed)</h2>
+<ul>
+<li>Researched and selected node-record-lpcm16 for Windows compatibility</li>
+<li>Added dependency to package.json</li>
+<li>Committed changes</li>
+</ul>
+<h2>Sprint 3: Basic Audio Recording (Completed)</h2>
+<ul>
+<li>Implemented AudioRecorder class with start/stop methods</li>
+<li>Uses node-record-lpcm16 for recording to file</li>
+<li>Committed changes</li>
+</ul>
+<h2>Sprint 4: Idle Listening (Completed)</h2>
+<ul>
+<li>Added idleListen method with silence detection and auto-restart</li>
+<li>Uses threshold and silence options for low-power listening</li>
+<li>Committed changes</li>
+</ul>
+<h2>Sprint 5: Recording Tests (Completed)</h2>
+<ul>
+<li>Added Jest as test framework</li>
+<li>Created unit tests for AudioRecorder class</li>
+<li>Updated test script</li>
+<li>Committed changes</li>
+</ul>
+<h2>Sprint 6: As-Directed Pushes (Completed)</h2>
+<ul>
+<li>Relaxed <code>.instructions.md</code> rules 2 and 3 to allow user-authorized remote configuration and pushes</li>
+<li>Added an &quot;As-Directed Pushes&quot; subsection with guardrails (confirm remote/branch, no force/all-branch pushes, no remote reconfiguration without direction)</li>
+<li>Updated the Commit Locally section to mirror the new policy</li>
+<li>Files modified: <code>.instructions.md</code>, <code>docs/sprint-log.md</code></li>
+<li>Known limitations: HTML doc mirror (rule 6) not yet generated for any sprint; tracked as deferred debt</li>
+<li>Why: a public GitHub remote (<code>origin/develop</code>) was set up out-of-band per explicit user direction; the rules needed to reflect that this is now permitted when directed</li>
+</ul>
+<h2>Sprint 7: Stabilization (Completed)</h2>
+<ul>
+<li>Fixed <code>src/audioRecorder.js</code>: closed the dangling <code>class AudioRecorder { ... }</code> body (the previous file was a SyntaxError on parse) and added the missing <code>stop()</code> method that several tests were already referencing</li>
+<li>Created <code>src/index.js</code>: a minimal CLI entry that prints help by default and supports <code>record &lt;path&gt;</code> and <code>idle &lt;path&gt;</code> subcommands with graceful SIGINT/SIGTERM shutdown. Resolves <code>MODULE_NOT_FOUND</code> from <code>npm start</code></li>
+<li>Rewrote <code>tests/audioRecorder.test.js</code>: now mocks <code>node-record-lpcm16</code> and <code>fs</code> so no real hardware or filesystem is touched. Covers construction, option merging, start/stop lifecycle, double-start guard, stop-without-start guard, and idle-listen chunk initiation</li>
+<li>Corrected <code>package.json</code> dependency range for <code>node-record-lpcm16</code> from <code>^1.0.5</code> (never published) to <code>^1.0.1</code> (latest real version)</li>
+<li>Hardened the <code>test</code> script to <code>jest --ci --forceExit</code> so CI/non-TTY runs don&#39;t hang on watch mode or stray timer handles</li>
+<li>Added a <code>.gitignore</code> covering <code>node_modules/</code>, audio artifacts (<code>*.wav</code>, <code>*.mp3</code>, <code>*.flac</code>, <code>recordings/</code>), logs, coverage, and common editor/OS files</li>
+<li>Files modified: <code>package.json</code>, <code>src/audioRecorder.js</code>, <code>tests/audioRecorder.test.js</code>, <code>docs/sprint-log.md</code></li>
+<li>Files added: <code>src/index.js</code>, <code>.gitignore</code>, <code>package-lock.json</code></li>
+<li>Validation: <code>node --check</code> clean on all source files; <code>npm test</code> reports 7/7 passing in ~0.3s</li>
+<li>Known limitations:<ul>
+<li><code>idleListen()</code> still has a latent issue where the silence-restart <code>setTimeout</code> may fire after <code>stop()</code> is called and re-open a new file stream. Out of scope for this sprint; flagged for Phase 3 work</li>
+<li>HTML doc mirror (rule 6) remains deferred debt</li>
+<li>Tests mock both the recording library and <code>fs</code>, so they validate wiring but not real audio capture; integration coverage will need a real-device sprint later</li>
+</ul>
+</li>
+<li>Why: the codebase committed at end of Phase 2 did not parse, had no entry file, had tests that referenced an undefined method, and pinned a nonexistent dep version. This sprint makes Phase 2 honestly complete before Phase 3 work begins</li>
+</ul>
+<h2>Sprint 8: HTML Mirror Catch-Up (Completed)</h2>
+<ul>
+<li>Paid down workflow rule 6 debt that had accumulated for seven sprints (no HTML mirrors had been generated for any prior sprint)</li>
+<li>Added <code>tools/build-html.js</code>: small Node generator that converts the project&#39;s markdown docs into self-contained HTML using <code>marked</code> (no JS framework, single inline <code>&lt;style&gt;</code> block, light/dark color-scheme support)</li>
+<li>Added <code>npm run docs:html</code> script so future sprints can regenerate mirrors in one command</li>
+<li>Added <code>marked</code> (^16.x line as resolved by npm) to <code>devDependencies</code> only; no runtime impact</li>
+<li>Generated initial mirrors at <code>docs/html/README.html</code>, <code>docs/html/instructions.html</code>, <code>docs/html/sprint-log.html</code>. A future <code>docs/sprint-plan.md</code> is wired in as an optional source so it auto-mirrors when created</li>
+<li>Files added: <code>tools/build-html.js</code>, <code>docs/html/README.html</code>, <code>docs/html/instructions.html</code>, <code>docs/html/sprint-log.html</code></li>
+<li>Files modified: <code>package.json</code>, <code>package-lock.json</code>, <code>docs/sprint-log.md</code></li>
+<li>Validation: <code>npm run docs:html</code> reports <code>ok</code> for all required sources; <code>npm test</code> 7/7 passing</li>
+<li>Known limitations:<ul>
+<li>Generator is one-way (md -&gt; html). It does not roundtrip edits made to HTML</li>
+<li>No anchor cross-links between mirrored docs yet; each HTML file is standalone</li>
+</ul>
+</li>
+<li>Why: rule 6 of <code>.instructions.md</code> mandates HTML mirrors every sprint; doing this once via tooling closes the debt and removes friction for future sprints</li>
+</ul>
+<p>Next: Phase 3 - Transcription (chunked Whisper integration). A roadmap sprint to formalize Phases 3-10 in a dedicated <code>docs/sprint-plan.md</code> is also worth scheduling.</p>
+
+</body>
+</html>

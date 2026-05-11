@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LocalRecorder — MDM Workflow Rules</title>
+  <style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    max-width: 760px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    line-height: 1.55;
+  }
+  h1, h2, h3, h4 { line-height: 1.25; }
+  h1 { border-bottom: 1px solid #8884; padding-bottom: 0.3rem; }
+  h2 { border-bottom: 1px solid #8882; padding-bottom: 0.2rem; margin-top: 2rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+  pre code { display: block; padding: 0.75rem; overflow-x: auto; background: #8881; border-radius: 4px; }
+  :not(pre) > code { background: #8881; padding: 0.1rem 0.3rem; border-radius: 3px; }
+  table { border-collapse: collapse; }
+  th, td { border: 1px solid #8884; padding: 0.4rem 0.6rem; }
+  blockquote { border-left: 3px solid #8884; padding-left: 0.75rem; color: #888; }
+  hr { border: none; border-top: 1px solid #8884; }
+  .meta { color: #888; font-size: 0.85em; margin-bottom: 1.5rem; }
+  .meta a { color: inherit; }
+</style>
+</head>
+<body>
+  <p class="meta">Generated from <code>.instructions.md</code> &middot; <a href="../../.instructions.md">view source</a></p>
+<h1>MDM Workflow Rules (Markdown-Driven Development)</h1>
+<p>You are operating in strict incremental sprint mode.</p>
+<h2>Primary Rules</h2>
+<ol>
+<li>All work must occur locally by default.</li>
+<li>Do NOT configure git remotes unless explicitly directed by the user.</li>
+<li>Do NOT push to origin unless explicitly directed by the user. When directed, push only the active branch and only after the sprint&#39;s local commit has been validated.</li>
+<li>Do NOT create cloud dependencies unless explicitly instructed.</li>
+<li>Every sprint must end in a stable local commit, regardless of whether a push is also performed.</li>
+<li>Prefer small atomic changes over large refactors.</li>
+<li>Preserve existing working functionality whenever possible.</li>
+</ol>
+<h3>As-Directed Pushes</h3>
+<p>When the user explicitly authorizes pushing:</p>
+<ul>
+<li>Confirm the target remote and branch before pushing.</li>
+<li>Push only the active branch (no <code>--all</code>, no force pushes).</li>
+<li>Never reconfigure existing remotes or change default branches without explicit direction.</li>
+<li>Treat each authorization as scoped to the current sprint unless the user says otherwise.</li>
+<li>Local commit and validation steps remain mandatory before any push.</li>
+</ul>
+<hr>
+<h1>Sprint Workflow</h1>
+<p>For EVERY sprint execute the following sequence IN ORDER:</p>
+<h2>(1) Sync &amp; Inspect</h2>
+<p>Run:</p>
+<ul>
+<li>git fetch (if remotes exist)</li>
+<li>git pull (if remotes exist)</li>
+<li>git status</li>
+</ul>
+<p>Then analyze:</p>
+<ul>
+<li>changed files</li>
+<li>untracked files</li>
+<li>merge conflicts</li>
+<li>repository health</li>
+</ul>
+<p>Do NOT continue if repository state is unsafe.</p>
+<hr>
+<h2>(2) Plan Sprint</h2>
+<p>Before coding:</p>
+<ul>
+<li>summarize sprint goal</li>
+<li>identify affected files</li>
+<li>identify possible risks</li>
+<li>define validation approach</li>
+<li>define rollback scope</li>
+</ul>
+<p>Keep plans concise.</p>
+<hr>
+<h2>(3) Implement</h2>
+<p>Perform ONLY the smallest useful implementation for the sprint.</p>
+<p>Rules:</p>
+<ul>
+<li>avoid unrelated refactors</li>
+<li>avoid placeholder TODO logic</li>
+<li>avoid deleting large blocks unless necessary</li>
+<li>preserve backward compatibility when possible</li>
+<li>prefer explicit readable code</li>
+</ul>
+<hr>
+<h2>(4) Validate</h2>
+<p>Run ALL lightweight validations possible.</p>
+<p>Examples:</p>
+<ul>
+<li>unit tests</li>
+<li>linting</li>
+<li>syntax validation</li>
+<li>type checks</li>
+<li>markdown validation</li>
+<li>HTML validation</li>
+<li>script execution sanity checks</li>
+</ul>
+<p>If tests fail:</p>
+<ul>
+<li>attempt repair</li>
+<li>document failures clearly</li>
+</ul>
+<p>Do NOT falsely claim tests passed.</p>
+<hr>
+<h2>(5) Documentation Update</h2>
+<p>After EVERY sprint:</p>
+<p>Update:</p>
+<ul>
+<li>README.md</li>
+<li>sprint log markdown</li>
+<li>architecture notes if changed</li>
+<li>changelog if applicable</li>
+</ul>
+<p>Documentation must include:</p>
+<ul>
+<li>what changed</li>
+<li>why it changed</li>
+<li>files modified</li>
+<li>known limitations</li>
+<li>next sprint ideas</li>
+</ul>
+<hr>
+<h2>(6) HTML Mirror</h2>
+<p>Generate/update HTML documentation mirroring markdown docs.</p>
+<p>Rules:</p>
+<ul>
+<li>preserve structure</li>
+<li>preserve headings</li>
+<li>preserve code blocks</li>
+<li>preserve hyperlinks</li>
+<li>use clean readable formatting</li>
+<li>avoid heavy frameworks unless requested</li>
+</ul>
+<hr>
+<h2>(7) Review Changes</h2>
+<p>Before commit:</p>
+<ul>
+<li>summarize modified files</li>
+<li>summarize risks</li>
+<li>summarize validations run</li>
+<li>summarize remaining concerns</li>
+</ul>
+<hr>
+<h2>(8) Commit Locally</h2>
+<p>Create a small atomic commit.</p>
+<p>Commit message format:</p>
+<p>[sprint-X] concise-description</p>
+<p>Examples:</p>
+<ul>
+<li>[sprint-1] initialize local recorder pipeline</li>
+<li>[sprint-2] add chunked whisper transcription</li>
+<li>[sprint-3] add rolling markdown summaries</li>
+</ul>
+<p>Do NOT push by default. Only push when explicitly directed by the user per the As-Directed Pushes rule above.</p>
+<hr>
+<h1>Development Philosophy</h1>
+<p>Prefer:</p>
+<ul>
+<li>maintainability</li>
+<li>observability</li>
+<li>rollback safety</li>
+<li>incremental progress</li>
+<li>documentation-first thinking</li>
+</ul>
+<p>Avoid:</p>
+<ul>
+<li>giant rewrites</li>
+<li>hidden magic</li>
+<li>unnecessary abstractions</li>
+<li>premature optimization</li>
+<li>excessive dependencies</li>
+</ul>
+<hr>
+<h1>Project Goals</h1>
+<p>The project is a local-first AI memory and workflow assistant.</p>
+<p>Core capabilities may include:</p>
+<ul>
+<li>local audio recording</li>
+<li>chunked transcription</li>
+<li>local summarization</li>
+<li>heat/trend analysis</li>
+<li>markdown knowledge persistence</li>
+<li>searchable memory</li>
+<li>periodic summaries</li>
+<li>low-power idle listening</li>
+</ul>
+<p>All architecture decisions should support:</p>
+<ul>
+<li>privacy</li>
+<li>offline operation</li>
+<li>incremental scalability</li>
+<li>local GPU acceleration</li>
+<li>human reviewability</li>
+</ul>
+
+</body>
+</html>
