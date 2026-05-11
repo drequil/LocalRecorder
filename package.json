@@ -4,14 +4,14 @@
   "description": "Local-first AI memory and workflow assistant",
   "main": "src/index.js",
   "scripts": {
-    "test": "jest",
+    "test": "jest --ci --forceExit",
     "start": "node src/index.js"
   },
   "keywords": ["ai", "audio", "transcription", "local", "privacy"],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "node-record-lpcm16": "^1.0.5"
+    "node-record-lpcm16": "^1.0.1"
   },
   "devDependencies": {
     "jest": "^29.7.0"

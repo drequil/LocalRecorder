@@ -53,4 +53,20 @@ class AudioRecorder {
     recordChunk();
   }
 
+  stop() {
+    if (!this.recording) {
+      throw new Error('No recording in progress');
+    }
+    if (typeof this.recording.stop === 'function') {
+      this.recording.stop();
+    }
+    this.recording = null;
+    if (this.fileStream) {
+      this.fileStream.end();
+      this.fileStream = null;
+    }
+    console.log('Recording stopped');
+  }
+}
+
 module.exports = AudioRecorder;
