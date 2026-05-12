@@ -449,6 +449,15 @@ async function main(argv) {
     recorder.start(recordTarget);
   }
 
+  // Reassure the user that Ctrl+C will drain in-flight transcriptions before
+  // exiting -- a common misconception is that Ctrl+C aborts the queue and
+  // discards work. The shutdown() handler awaits drainTranscriptions() exactly
+  // for this reason. The message only prints when transcription is on, since
+  // there's nothing to drain otherwise.
+  if (recorderOptions && recorderOptions.transcribe) {
+    console.log('Press Ctrl+C to stop. Pending transcriptions will finish before exit.');
+  }
+
   let durationTimer = null;
   let shuttingDown = false;
   const shutdown = async (reason) => {
