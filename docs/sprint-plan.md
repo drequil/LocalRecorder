@@ -39,6 +39,7 @@ Listening before recording, for three reasons:
 | MS-6 | Rolling idle chunks | `idle <dir>` writes timestamped per-silence WAV files in `<dir>` | ✅ |
 | MS-7 | Whisper-aligned defaults | Default capture is 16 kHz mono 16-bit signed PCM in WAV | ✅ |
 | MS-8 | Chunk metadata sidecars | Each idle-mode WAV gets a sidecar `.json` with start, end, peak | ✅ |
+| MS-9 | CLI knobs for idle / listen / record | `--threshold`, `--silence`, `--device`, `--max-chunk-seconds` | ✅ |
 
 Eight mini-sprints; each should be ~30–90 minutes of work. After MS-3 you can demo "listening". After MS-4 you can demo "recording". After MS-8 the audio capture pipeline is ready to hand off to a transcription sprint.
 

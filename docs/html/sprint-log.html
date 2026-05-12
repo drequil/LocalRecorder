@@ -437,6 +437,38 @@
 </li>
 <li>Why: this closes the eight-mini-sprint capture track. The pipeline now produces (1) playable WAVs at the Whisper format, (2) one file per silence-delimited burst, (3) a sidecar JSON capturing everything downstream needs to know about that chunk without reading the audio. The next track (Phase 4 / transcription) can begin with no further capture-side work required</li>
 </ul>
+<h2>Sprint 20 (MS-9): CLI Knobs for record / listen / idle (Completed)</h2>
+<ul>
+<li>New CLI flags: <code>--threshold P</code>, <code>--silence N</code>, <code>--device &lt;id&gt;</code>, <code>--max-chunk-seconds N</code> (idle); <code>--device &lt;id&gt;</code> (listen and record). <code>--duration N</code> for record carries forward from MS-5. Every flag is opt-in; default behavior is unchanged for users not passing any of them</li>
+<li>Refactored arg parsing: small generic <code>parseSubcommandArgs(args, flagSpec)</code> helper with a <code>COERCERS</code> table for <code>positiveNumber</code>, <code>nonNegativeNumber</code>, <code>percent</code>, <code>string</code> types. Each subcommand declares its own <code>FOO_FLAGS</code> schema (e.g. <code>RECORD_FLAGS</code>, <code>IDLE_FLAGS</code>, <code>LISTEN_FLAGS</code>) and gets its own thin <code>parseFooArgs(args)</code> wrapper that validates positional count and reshapes the result to the subcommand&#39;s expected return shape. Existing <code>parseRecordArgs</code> API preserved (it returns <code>{ output, durationSeconds, device }</code> instead of just <code>{ output, durationSeconds }</code>; tests updated to match)</li>
+<li><code>--max-chunk-seconds</code> is the only flag that touches <code>AudioRecorder</code> itself. New constructor option <code>maxChunkSeconds</code> (defaults to 0 = unlimited). When &gt; 0, <code>idleListen</code> arms a timer per chunk; when the timer fires it calls <code>this.recording.stop()</code>, which kills sox and triggers the existing &#39;end&#39; rotation path. The timer is cleared on stream <code>&#39;end&#39;</code> or <code>&#39;error&#39;</code>, and is never installed when <code>maxChunkSeconds &lt;= 0</code></li>
+<li>The other three knobs (<code>--threshold</code>, <code>--silence</code>, <code>--device</code>) flow through to AudioRecorder via existing constructor options (<code>idleThreshold</code>, <code>idleSilenceSeconds</code>, <code>device</code>). No new AudioRecorder code needed beyond plumbing</li>
+<li><code>compactOptions(obj)</code> helper in <code>src/index.js</code> strips <code>null</code>/<code>undefined</code> values before passing to <code>new AudioRecorder(...)</code>, so unset flags don&#39;t clobber defaults via <code>{ ...defaults, ...options }</code> spread mechanics</li>
+<li>Help text rewritten to fit the wider flag surface; <code>printHelp()</code> now also lists a &quot;Flag notes&quot; section explaining what each flag does</li>
+<li>README updated with a new Usage section: full CLI subcommand list, flag reference table, and an explanation of the idle output (wav + json pair)</li>
+<li>Tests added (17 new):<ul>
+<li><code>tests/parseIdleArgs.test.js</code> (13): missing directory, default null knobs, <code>--threshold</code> percent coercion + range, <code>--silence</code> positive coercion, <code>--device</code> string, <code>--max-chunk-seconds</code> positive coercion, flags before/after positional, unknown-flag rejection, extra-positional rejection, plus a small <code>parseListenArgs</code> describe block</li>
+<li><code>tests/parseRecordArgs.test.js</code> (1 new): <code>--device</code> parses alongside <code>--duration</code>. Existing 9 tests updated to expect the new <code>device: null</code> field</li>
+<li><code>tests/audioRecorder.test.js</code> (3 new): <code>maxChunkSeconds</code> arms a timer that calls <code>recording.stop()</code> after N seconds; absent/0 maxChunkSeconds installs no timer; the timer is cleared when the stream ends naturally</li>
+</ul>
+</li>
+<li>Files modified: <code>src/index.js</code>, <code>src/audioRecorder.js</code>, <code>README.md</code>, <code>tests/parseRecordArgs.test.js</code>, <code>tests/audioRecorder.test.js</code>, <code>docs/sprint-log.md</code>, <code>docs/sprint-plan.md</code>, regenerated HTML mirrors</li>
+<li>Files added: <code>tests/parseIdleArgs.test.js</code></li>
+<li>Validation:<ul>
+<li><code>npm test</code> -- 99/99 passing across 9 suites (82 -&gt; 99 with 17 new tests)</li>
+<li><code>node src/index.js idle &lt;tmpdir&gt; --threshold 0.01 --max-chunk-seconds 3</code> (8-second job, Stop-Job kill) -- produced 4 complete chunk WAV+JSON pairs at ~3s wall-clock intervals; sidecar for chunk 1 confirmed: <code>durationMs: 2559</code>, <code>peak: 0.0797</code>, <code>peakDb: -21.98</code>, <code>bytes: 81920</code>. Demonstrates the <code>--max-chunk-seconds</code> rotation actually fires and the sidecar shape is preserved when the chunk ends via the timer instead of natural silence detection</li>
+<li><code>node src/index.js help</code> -- updated help text rendered correctly</li>
+</ul>
+</li>
+<li>Known limitations:<ul>
+<li><strong>No <code>--threshold</code> / <code>--silence</code> / <code>--max-chunk-seconds</code> for <code>record</code>.</strong> The flags only make sense for <code>idle</code>. Documented in help text by their per-subcommand placement; rejected with <code>unknown flag</code> if passed elsewhere</li>
+<li><strong><code>--device</code> accepts any string.</strong> Validation (does the device actually exist?) is sox&#39;s job; we just pass it through. The <code>devices</code> subcommand exists for this purpose</li>
+<li><strong>No env-var equivalents.</strong> Power users running long-lived idle sessions might want <code>LOCALRECORDER_DEVICE</code> etc. so they don&#39;t have to retype flags. Trivial to add via a thin <code>process.env</code> overlay in front of <code>compactOptions</code> when the time comes</li>
+<li><strong><code>--max-chunk-seconds</code> doesn&#39;t include sox startup latency in its budget.</strong> A 3-second budget yields ~2.56 s of audio because sox spends ~0.4 s initializing the waveaudio driver. Same slippage as MS-5; same fix (MS-5.1, sox-side <code>trim</code>) would apply</li>
+</ul>
+</li>
+<li>Why: every gap in the post-MS-8 brainstorm tagged &quot;CLI knobs missing&quot; is now closed. Tuning idle mode for a noisy office, picking a non-default microphone, and capping chunk length for transcription performance are all one-flag changes instead of edit-the-source changes. This unblocks longer-duration testing (a user can now leave <code>idle ./day-log --threshold 0.05 --max-chunk-seconds 30</code> running for an afternoon and inspect the resulting chunks) without further code work</li>
+</ul>
 
 </body>
 </html>

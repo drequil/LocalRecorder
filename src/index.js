@@ -3,61 +3,160 @@ const AudioRecorder = require('./audioRecorder');
 const { enumerateDevices } = require('./audioDevices');
 const { peak16LE, toDb, renderBar } = require('./audioLevels');
 
+// Minimal subcommand flag parser. flagSpec maps `--flag-name` to a descriptor
+// {type, as}. Supports `--flag value` and `--flag=value` shapes; rejects unknown
+// flags and missing values. Returns { flags, positional } or { error }.
+const COERCERS = {
+  positiveNumber(raw) {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) {
+      return { error: `must be a positive number, got ${JSON.stringify(raw)}` };
+    }
+    return { value: n };
+  },
+  nonNegativeNumber(raw) {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) {
+      return { error: `must be a non-negative number, got ${JSON.stringify(raw)}` };
+    }
+    return { value: n };
+  },
+  percent(raw) {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0 || n > 100) {
+      return { error: `must be a number 0..100, got ${JSON.stringify(raw)}` };
+    }
+    return { value: n };
+  },
+  string(raw) {
+    if (typeof raw !== 'string' || raw.length === 0) {
+      return { error: 'must be a non-empty string' };
+    }
+    return { value: raw };
+  },
+};
+
+function parseSubcommandArgs(args, flagSpec) {
+  const flags = {};
+  const positional = [];
+  for (let i = 0; i < args.length; i++) {
+    let a = args[i];
+    let inlineValue = null;
+    if (a.startsWith('--') && a.includes('=')) {
+      const eq = a.indexOf('=');
+      inlineValue = a.slice(eq + 1);
+      a = a.slice(0, eq);
+    }
+    if (a.startsWith('--')) {
+      const spec = flagSpec[a];
+      if (!spec) return { error: `unknown flag: ${a}` };
+      let raw = inlineValue;
+      if (raw === null) {
+        raw = args[i + 1];
+        if (raw === undefined) return { error: `${a} requires a value` };
+        i += 1;
+      }
+      const coerce = COERCERS[spec.type];
+      if (!coerce) return { error: `${a}: internal: unknown coercion type ${spec.type}` };
+      const parsed = coerce(raw);
+      if (parsed.error) return { error: `${a} ${parsed.error}` };
+      flags[spec.as] = parsed.value;
+      continue;
+    }
+    positional.push(a);
+  }
+  return { flags, positional };
+}
+
+const RECORD_FLAGS = {
+  '--duration': { type: 'positiveNumber', as: 'durationSeconds' },
+  '--device': { type: 'string', as: 'device' },
+};
+
+const IDLE_FLAGS = {
+  '--threshold': { type: 'percent', as: 'idleThreshold' },
+  '--silence': { type: 'positiveNumber', as: 'idleSilenceSeconds' },
+  '--device': { type: 'string', as: 'device' },
+  '--max-chunk-seconds': { type: 'positiveNumber', as: 'maxChunkSeconds' },
+};
+
+const LISTEN_FLAGS = {
+  '--device': { type: 'string', as: 'device' },
+};
+
 function printHelp() {
   console.log('LocalRecorder v0.1.0');
   console.log('');
-  console.log('Usage:');
-  console.log('  node src/index.js devices                              List audio input devices visible to sox');
-  console.log('  node src/index.js listen                               Live peak-level meter (no file written)');
-  console.log('  node src/index.js record <output.wav> [--duration N]   Record (Ctrl+C, or stop after N seconds)');
-  console.log('  node src/index.js idle <directory>                     Idle listening; one WAV per silence-delimited chunk');
-  console.log('  node src/index.js help                                 Show this help');
+  console.log('Subcommands:');
+  console.log('  devices                                    List audio input devices visible to sox');
+  console.log('  listen   [--device <id>]                   Live peak-level meter (no file written)');
+  console.log('  record <out.wav> [--duration N] [--device <id>]');
+  console.log('                                             Record one WAV (Ctrl+C, or stop after N seconds)');
+  console.log('  idle    <directory> [--threshold P] [--silence N] [--device <id>] [--max-chunk-seconds N]');
+  console.log('                                             Per-silence WAV chunks + JSON sidecars into <directory>');
+  console.log('  help                                       Show this help');
+  console.log('');
+  console.log('Flag notes:');
+  console.log('  --duration N            Stop after N seconds (positive number)');
+  console.log('  --threshold P           Silence threshold percent (0..100; default 0.5)');
+  console.log('  --silence N             Silence duration before rotation in seconds (positive; default 1.0)');
+  console.log('  --device <id>           Audio input device id (Windows waveaudio index; default 0)');
+  console.log('  --max-chunk-seconds N   Force-rotate a chunk after N seconds even without silence');
 }
 
 function parseRecordArgs(args) {
-  let output = null;
-  let durationSeconds = null;
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '--duration') {
-      const next = args[i + 1];
-      if (next === undefined) {
-        return { error: '--duration requires a value (seconds, positive number)' };
-      }
-      const parsed = Number(next);
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        return { error: `--duration must be a positive number, got ${JSON.stringify(next)}` };
-      }
-      durationSeconds = parsed;
-      i += 1;
-      continue;
-    }
-    if (a.startsWith('--duration=')) {
-      const raw = a.slice('--duration='.length);
-      const parsed = Number(raw);
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        return { error: `--duration must be a positive number, got ${JSON.stringify(raw)}` };
-      }
-      durationSeconds = parsed;
-      continue;
-    }
-    if (a.startsWith('--')) {
-      return { error: `unknown flag: ${a}` };
-    }
-    if (output === null) {
-      output = a;
-      continue;
-    }
-    return { error: `unexpected extra argument: ${a}` };
-  }
-  if (!output) {
-    return { error: 'output file path required' };
-  }
-  return { output, durationSeconds };
+  const parsed = parseSubcommandArgs(args, RECORD_FLAGS);
+  if (parsed.error) return { error: parsed.error };
+  const { flags, positional } = parsed;
+  if (positional.length === 0) return { error: 'output file path required' };
+  if (positional.length > 1) return { error: `unexpected extra argument: ${positional[1]}` };
+  return {
+    output: positional[0],
+    durationSeconds: flags.durationSeconds != null ? flags.durationSeconds : null,
+    device: flags.device != null ? flags.device : null,
+  };
 }
 
-function runListen() {
-  const recorder = new AudioRecorder();
+function parseIdleArgs(args) {
+  const parsed = parseSubcommandArgs(args, IDLE_FLAGS);
+  if (parsed.error) return { error: parsed.error };
+  const { flags, positional } = parsed;
+  if (positional.length === 0) return { error: 'output directory required' };
+  if (positional.length > 1) return { error: `unexpected extra argument: ${positional[1]}` };
+  return {
+    directory: positional[0],
+    idleThreshold: flags.idleThreshold != null ? flags.idleThreshold : null,
+    idleSilenceSeconds: flags.idleSilenceSeconds != null ? flags.idleSilenceSeconds : null,
+    device: flags.device != null ? flags.device : null,
+    maxChunkSeconds: flags.maxChunkSeconds != null ? flags.maxChunkSeconds : null,
+  };
+}
+
+function parseListenArgs(args) {
+  const parsed = parseSubcommandArgs(args, LISTEN_FLAGS);
+  if (parsed.error) return { error: parsed.error };
+  const { flags, positional } = parsed;
+  if (positional.length > 0) return { error: `unexpected extra argument: ${positional[0]}` };
+  return {
+    device: flags.device != null ? flags.device : null,
+  };
+}
+
+function compactOptions(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== null && v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+function runListen(args = []) {
+  const parsed = parseListenArgs(args);
+  if (parsed.error) {
+    console.error(`Error: ${parsed.error}`);
+    return 1;
+  }
+  const recorder = new AudioRecorder(compactOptions({ device: parsed.device }));
   let windowPeak = 0;
   let lastRender = 0;
 
@@ -131,8 +230,10 @@ async function main(argv) {
     return runDevices();
   }
 
+  const tail = args.slice(1);
+
   if (command === 'listen') {
-    return runListen();
+    return runListen(tail);
   }
 
   if (!['record', 'idle'].includes(command)) {
@@ -141,10 +242,10 @@ async function main(argv) {
     return 1;
   }
 
-  const tail = args.slice(1);
   let recordTarget;
   let idleDirectory;
   let durationSeconds = null;
+  let recorderOptions = {};
 
   if (command === 'record') {
     const parsed = parseRecordArgs(tail);
@@ -154,16 +255,23 @@ async function main(argv) {
     }
     recordTarget = path.resolve(parsed.output);
     durationSeconds = parsed.durationSeconds;
+    recorderOptions = compactOptions({ device: parsed.device });
   } else {
-    const target = tail[0];
-    if (!target) {
-      console.error('Error: output directory required');
+    const parsed = parseIdleArgs(tail);
+    if (parsed.error) {
+      console.error(`Error: ${parsed.error}`);
       return 1;
     }
-    idleDirectory = path.resolve(target);
+    idleDirectory = path.resolve(parsed.directory);
+    recorderOptions = compactOptions({
+      device: parsed.device,
+      idleThreshold: parsed.idleThreshold,
+      idleSilenceSeconds: parsed.idleSilenceSeconds,
+      maxChunkSeconds: parsed.maxChunkSeconds,
+    });
   }
 
-  const recorder = new AudioRecorder();
+  const recorder = new AudioRecorder(recorderOptions);
   if (command === 'idle') {
     recorder.idleListen(idleDirectory);
   } else {
@@ -209,4 +317,13 @@ if (require.main === module) {
     });
 }
 
-module.exports = { main, printHelp, runDevices, runListen, parseRecordArgs };
+module.exports = {
+  main,
+  printHelp,
+  runDevices,
+  runListen,
+  parseRecordArgs,
+  parseIdleArgs,
+  parseListenArgs,
+  parseSubcommandArgs,
+};

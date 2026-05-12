@@ -65,6 +65,43 @@ sudo dnf install sox       # Fedora
 sudo pacman -S sox         # Arch
 ```
 
+## Usage
+
+The CLI lives at `node src/index.js`. Run with no arguments (or `help`) for the full list of subcommands and flags.
+
+```bash
+node src/index.js devices
+# List audio input devices visible to sox.
+
+node src/index.js listen [--device <id>]
+# Live peak-level meter (no file written). Useful for confirming the mic is picking up sound.
+
+node src/index.js record <out.wav> [--duration N] [--device <id>]
+# Record one WAV. Stops on Ctrl+C, or automatically after --duration seconds.
+
+node src/index.js idle <directory> [--threshold P] [--silence N] [--device <id>] [--max-chunk-seconds N]
+# Per-silence WAV chunks plus JSON sidecars into <directory>.
+```
+
+### Flag reference
+
+| Flag | Subcommand | Type | Description |
+|---|---|---|---|
+| `--duration N` | record | seconds | Stop after N seconds of wall clock. ~0.4 s of sox startup latency on Windows. |
+| `--device <id>` | listen / record / idle | string | Audio input device. Default is `0` on Windows. Use `devices` to enumerate. |
+| `--threshold P` | idle | percent (0..100) | Silence detection threshold. Default `0.5`. Lower = more sensitive. |
+| `--silence N` | idle | seconds | Silence duration before a chunk rotates. Default `1.0`. |
+| `--max-chunk-seconds N` | idle | seconds | Force-rotate after N seconds even if the user is still talking. Off by default. |
+
+### Idle output
+
+Each silence-delimited chunk becomes two files in `<directory>`:
+
+- `chunk-YYYYMMDD-HHMMSS-mmm.wav` — Whisper-aligned 16 kHz mono 16-bit signed PCM
+- `chunk-YYYYMMDD-HHMMSS-mmm.json` — sidecar (schema v1) with `{ version, wav, start, end, durationMs, audio, peak, peakDb, bytes }`
+
+Empty placeholder chunks (sox waiting for audio that never arrived) are auto-deleted.
+
 ## Development
 
 Follow MDM (Markdown-Driven Development) workflow with incremental sprints. Each sprint ends with commit, validation, and documentation update.

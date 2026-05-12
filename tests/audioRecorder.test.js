@@ -134,6 +134,54 @@ describe('AudioRecorder', () => {
     expect(lastCall.idleSilenceSeconds).toBeUndefined();
   });
 
+  test('idleListen() kills the current chunk after maxChunkSeconds when set', () => {
+    jest.useFakeTimers();
+    try {
+      const custom = new AudioRecorder({ maxChunkSeconds: 5 });
+      custom.idleListen('./recordings');
+      const firstRecording = recorderLib.__lastRecording;
+      expect(firstRecording.stop).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(5000);
+      expect(firstRecording.stop).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('idleListen() does NOT install a max-chunk timer when maxChunkSeconds is absent or 0', () => {
+    jest.useFakeTimers();
+    try {
+      const custom = new AudioRecorder();
+      custom.idleListen('./recordings');
+      const firstRecording = recorderLib.__lastRecording;
+      jest.advanceTimersByTime(60000);
+      expect(firstRecording.stop).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('idleListen() clears the max-chunk timer when the stream ends naturally', () => {
+    jest.useFakeTimers();
+    try {
+      const custom = new AudioRecorder({ maxChunkSeconds: 5 });
+      custom.idleListen('./recordings');
+      const stream = recorderLib.__lastRecording.__stream;
+      const firstRecording = recorderLib.__lastRecording;
+
+      const endHandler = stream.on.mock.calls.find(([event]) => event === 'end');
+      expect(endHandler).toBeDefined();
+      endHandler[1]();
+
+      jest.advanceTimersByTime(10000);
+      // First recording's stop should not be called by the timer (timer was cleared).
+      expect(firstRecording.stop).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test('idleListen() rotates to a new chunk file on each silence event', () => {
     jest.useFakeTimers();
     try {

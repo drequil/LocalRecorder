@@ -30,7 +30,7 @@ function defaultChunkFilename(now = new Date(), suffix = '') {
 
 class AudioRecorder {
   constructor(options = {}) {
-    const { idleThreshold, idleSilenceSeconds, ...rest } = options;
+    const { idleThreshold, idleSilenceSeconds, maxChunkSeconds, ...rest } = options;
     this.options = {
       ...WHISPER_AUDIO_FORMAT,
       ...rest,
@@ -39,6 +39,10 @@ class AudioRecorder {
     this.idleSilenceSeconds = Number.isFinite(idleSilenceSeconds)
       ? String(idleSilenceSeconds)
       : '1.0';
+    // 0 / null / undefined => no upper bound on chunk length.
+    this.maxChunkSeconds = Number.isFinite(maxChunkSeconds) && maxChunkSeconds > 0
+      ? maxChunkSeconds
+      : 0;
     this.recording = null;
     this.fileStream = null;
     this.fileStreamPath = null;
@@ -193,11 +197,31 @@ class AudioRecorder {
         silence: this.idleSilenceSeconds,
       });
       const stream = this.recording.stream();
+
+      let maxChunkTimer = null;
+      if (this.maxChunkSeconds > 0) {
+        maxChunkTimer = setTimeout(() => {
+          // Time's up. Kill sox; its stdout 'end' will trigger the rotation
+          // path just like a natural silence-detector exit would.
+          if (this.recording && typeof this.recording.stop === 'function') {
+            console.log(`Max chunk seconds (${this.maxChunkSeconds}) reached, rotating: ${path.basename(chunkPath)}`);
+            try { this.recording.stop(); } catch (_) { /* already gone */ }
+          }
+        }, this.maxChunkSeconds * 1000);
+      }
+      const clearMaxChunkTimer = () => {
+        if (maxChunkTimer) {
+          clearTimeout(maxChunkTimer);
+          maxChunkTimer = null;
+        }
+      };
+
       stream.on('data', (chunk) => peakAcc.push(chunk));
       stream.pipe(this.fileStream);
       stream.on('error', (err) => {
         // If stop() cleared this.recording, the error came from an intentional
         // kill -- stay quiet and let the shutdown path do its thing.
+        clearMaxChunkTimer();
         if (!this.recording) return;
         console.error('Idle-listen stream error:', err);
         this.idle = false;
@@ -210,9 +234,10 @@ class AudioRecorder {
       });
 
       stream.on('end', () => {
-        // Either sox detected silence and exited cleanly, or stop() killed it.
-        // Either way, close the current chunk; only schedule the next one if
-        // we're still in idle mode (i.e. stop() didn't run).
+        // Either sox detected silence and exited cleanly, or stop()/max-chunk
+        // killed it. Either way, close the current chunk; only schedule the
+        // next one if we're still in idle mode (i.e. stop() didn't run).
+        clearMaxChunkTimer();
         console.log(`Silence detected, rotating chunk: ${path.basename(chunkPath)}`);
         this.recording = null;
         if (this.fileStream) {

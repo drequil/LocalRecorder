@@ -1,20 +1,25 @@
 const { parseRecordArgs } = require('../src/index');
 
 describe('parseRecordArgs', () => {
-  test('returns output with no duration when only a path is provided', () => {
-    expect(parseRecordArgs(['out.wav'])).toEqual({ output: 'out.wav', durationSeconds: null });
+  test('returns output with null duration/device when only a path is provided', () => {
+    expect(parseRecordArgs(['out.wav'])).toEqual({ output: 'out.wav', durationSeconds: null, device: null });
   });
 
   test('parses --duration N before the output path', () => {
-    expect(parseRecordArgs(['--duration', '5', 'out.wav'])).toEqual({ output: 'out.wav', durationSeconds: 5 });
+    expect(parseRecordArgs(['--duration', '5', 'out.wav'])).toEqual({ output: 'out.wav', durationSeconds: 5, device: null });
   });
 
   test('parses --duration N after the output path', () => {
-    expect(parseRecordArgs(['out.wav', '--duration', '5'])).toEqual({ output: 'out.wav', durationSeconds: 5 });
+    expect(parseRecordArgs(['out.wav', '--duration', '5'])).toEqual({ output: 'out.wav', durationSeconds: 5, device: null });
   });
 
   test('parses --duration=N form', () => {
-    expect(parseRecordArgs(['out.wav', '--duration=2.5'])).toEqual({ output: 'out.wav', durationSeconds: 2.5 });
+    expect(parseRecordArgs(['out.wav', '--duration=2.5'])).toEqual({ output: 'out.wav', durationSeconds: 2.5, device: null });
+  });
+
+  test('parses --device alongside --duration', () => {
+    expect(parseRecordArgs(['out.wav', '--device', '3', '--duration', '5']))
+      .toEqual({ output: 'out.wav', durationSeconds: 5, device: '3' });
   });
 
   test('errors when --duration is followed by no value', () => {
