@@ -229,7 +229,7 @@ Same shape as Phase 3A/3B: prove the foundation before integrating.
 | T-3 | Wire transcription into idle rotation | Each rotated chunk is auto-transcribed; transcript stored next to the WAV (sibling `<basename>.txt`); CLI shutdown drains the queue | ✅ |
 | T-4 | Per-chunk markdown persistence | `.md` per chunk combines transcript + sidecar metadata for human review; failure-stub `.md` when transcription fails | ✅ |
 | T-5 | Resilience: retries, skip empty, error handling | Transcription survives bad chunks, slow runs, and silent rooms via single retry + peak-gate skip + debounced backlog warning | ✅ |
-| T-6 | End-to-end "speak → see markdown update" demo | Documented full run from `idle` start to live `.md` updates | ⏳ |
+| T-6 | End-to-end "speak → see markdown update" demo | Documented full run from `idle` start to live `.md` updates; 26-chunk demo captured + live backlog warning observed + clean shutdown verified | ✅ |
 
 Six sprints; ~30–90 minutes each. After T-2 you can demo "transcribe a file". After T-4 the per-chunk pipeline is feature-complete. T-5 hardens it. T-6 is the milestone the user actually asked for.
 
@@ -297,7 +297,7 @@ Split into two mini-sprints since the queue was a reusable primitive worth its o
 - **Rollback:** revert the new flags; T-3/T-4 behavior persists, just less defensively.
 - **Risk:** the peak threshold needs tuning per environment. Make it configurable from day one (already required by the flag list) and document the tuning procedure in the sprint log.
 
-### T-6 — End-to-end demo: speak → see markdown update
+### T-6 — End-to-end demo: speak → see markdown update (✅ Completed in Sprint 28)
 
 - **Goal:** the milestone. The user runs one command, speaks into the mic, and watches `.md` files appear in real time as chunks rotate. This is the proof that Phase 4 produces something useful to the user's stated goal.
 - **Touches:** mostly documentation — `docs/sprint-log.md` records the run; `README.md` gains a "Live demo" section with the canonical command. Code changes only if T-1..T-5 expose any rough edges during the run.

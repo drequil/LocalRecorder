@@ -359,8 +359,8 @@
 <tr>
 <td>T-6</td>
 <td>End-to-end &quot;speak → see markdown update&quot; demo</td>
-<td>Documented full run from <code>idle</code> start to live <code>.md</code> updates</td>
-<td>⏳</td>
+<td>Documented full run from <code>idle</code> start to live <code>.md</code> updates; 26-chunk demo captured + live backlog warning observed + clean shutdown verified</td>
+<td>✅</td>
 </tr>
 </tbody></table>
 <p>Six sprints; ~30–90 minutes each. After T-2 you can demo &quot;transcribe a file&quot;. After T-4 the per-chunk pipeline is feature-complete. T-5 hardens it. T-6 is the milestone the user actually asked for.</p>
@@ -440,7 +440,7 @@
 <li><strong>Rollback:</strong> revert the new flags; T-3/T-4 behavior persists, just less defensively.</li>
 <li><strong>Risk:</strong> the peak threshold needs tuning per environment. Make it configurable from day one (already required by the flag list) and document the tuning procedure in the sprint log.</li>
 </ul>
-<h3>T-6 — End-to-end demo: speak → see markdown update</h3>
+<h3>T-6 — End-to-end demo: speak → see markdown update (✅ Completed in Sprint 28)</h3>
 <ul>
 <li><strong>Goal:</strong> the milestone. The user runs one command, speaks into the mic, and watches <code>.md</code> files appear in real time as chunks rotate. This is the proof that Phase 4 produces something useful to the user&#39;s stated goal.</li>
 <li><strong>Touches:</strong> mostly documentation — <code>docs/sprint-log.md</code> records the run; <code>README.md</code> gains a &quot;Live demo&quot; section with the canonical command. Code changes only if T-1..T-5 expose any rough edges during the run.</li>

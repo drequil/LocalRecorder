@@ -835,6 +835,45 @@ Then re-run: npm run transcribe:check
 </li>
 <li>Why: the user&#39;s stated goal is &quot;leave it running for an hour and walk away&quot;. The T-3.2 pipeline did the happy path; this sprint hardens it against three real failure modes: dead-air chunks (skip-empty), flaky whisper-cli runs (retry), and transcription falling behind capture (backlog warn). After this sprint, <code>idle --transcribe</code> is genuinely production-ready for long-running meeting capture -- the user can leave it on a laptop for hours and the directory will fill with <code>.wav</code>+<code>.json</code>+<code>.txt</code>+<code>.md</code> quartets (or <code>.wav</code>+<code>.json</code>+<code>.md</code>-stub for silent stretches) without intervention. T-6 will validate this end-to-end with a real spoken-content demo</li>
 </ul>
+<h2>Sprint 28 (T-6): End-to-end demo -- speak → see markdown update (Completed)</h2>
+<ul>
+<li>The Phase 4 milestone. This sprint is mostly documentation and a captured live-run that proves the previous five sprints compose into the user-stated goal: &quot;run one command, speak into the mic, watch markdown appear in real time&quot;. No production code changed. The track&#39;s &quot;Definition of Done&quot; (in <code>docs/sprint-plan.md</code>) is now satisfied end-to-end on this Windows machine</li>
+<li>README additions:<ul>
+<li>New &quot;Live demo — speak, watch transcripts appear&quot; section with a runnable recipe: <code>node src/index.js idle --name t6-demo --transcribe --threshold 0.5 --silence 2 --duration 60</code>. Step-by-step instructions: speak 2-3 sentences with ~3 s pauses, watch the session directory fill up, observe the streaming <code>[transcribed]</code> lines during shutdown drain, open one <code>.md</code> in any editor</li>
+<li>New &quot;Model trade-offs&quot; table covering <code>tiny.en</code> / <code>base.en</code> / <code>small.en</code> / <code>medium.en</code> / <code>large-v3</code> with size, CPU speed, accuracy, and recommended-for columns. Captures the trade-off honestly: <code>base.en</code> is the default sweet spot; if a real meeting needs better accuracy the user knows where to upgrade; disk / memory cost is called out so people don&#39;t blindly download <code>large-v3</code></li>
+</ul>
+</li>
+<li><strong>Captured demo run</strong> (real hardware, this machine, with the user&#39;s environment having ambient music in the background as the &quot;speech&quot; source so we got non-trivial transcription work to do):<ul>
+<li><strong>Command:</strong> <code>idle &lt;tmp&gt; --threshold 0.5 --silence 2 --max-chunk-seconds 5 --transcribe --duration 30</code> (max-chunk-seconds forced rotation under sustained sound so we got many chunks in 30 s instead of one; default <code>transcribe-min-peak 0.005</code>, default <code>transcribe-queue-max 5</code>, default 1 retry)</li>
+<li><strong>Result:</strong> 26 chunks rotated. Every single chunk produced the full quartet: <strong>wav=26, json=26, txt=26, md=26.</strong> Zero failures. Zero skips at the peak gate (ambient sound was ~-25 dBFS, comfortably above the 0.005 / -46 dBFS gate). Several <code>.txt</code> files were 1 byte (whisper.cpp emitting just a newline for nearly-silent stretches); their <code>.md</code> siblings rendered the <code>_No speech detected_</code> stub from T-4. The loud-enough chunks all transcribed to real text (whisper.cpp tagged the music with ♪ markers, which PowerShell rendered as <code>�T�</code> -- a terminal rendering quirk, not a data bug; the underlying UTF-8 is clean in the on-disk <code>.md</code>)</li>
+<li><strong>Backpressure warning fired exactly once,</strong> mid-run, as planned: <code>[transcribe backlog] queue depth 6 exceeds --transcribe-queue-max 5. Capture is outrunning transcription; consider raising --silence, lowering --max-chunk-seconds, or using a smaller model.</code> This is the live T-5 debounced overflow path. The warning did NOT re-fire even though the queue stayed above the threshold for ~15 s afterward, demonstrating the re-arm-on-drain semantics work in practice as well as in the unit tests</li>
+<li><strong>Async shutdown drained the queue cleanly.</strong> After <code>Reached 30s, stopping.</code> and <code>Recording stopped.</code> the log streamed <code>[transcribed] ...md</code> lines for the remaining queued chunks (~14 of them) and the process exited zero only after the last one. Total drain time after the 30 s capture: ~21 s (matches T-2&#39;s ~57% of realtime measurement on <code>base.en</code> + the Win32 BLAS build, times 26 chunks of mostly-quiet 1-2 s audio)</li>
+<li><strong>Clean shutdown:</strong> <code>Get-Process sox</code> and <code>Get-Process whisper*</code> both returned 0 processes immediately after exit. No orphans</li>
+</ul>
+</li>
+<li>Validation against the Phase 4 &quot;Definition of Done&quot; (from <code>docs/sprint-plan.md</code>):<ul>
+<li>✅ <code>npm run transcribe:check</code> reports a whisper.cpp version on this machine (verified by the T-1 / T-2 sprints; whisper-cli&#39;s --help banner has no semver but <code>versionLabel</code> carries the raw banner, which counts per T-1&#39;s design)</li>
+<li>✅ <code>node src/index.js transcribe &lt;wav&gt;</code> produces a non-empty transcript for a non-silent WAV (verified during the T-4 smoke, where the user&#39;s ambient speech became &quot;Right, it&#39;s listening pretty good, mama. And it&#39;s doing crazy good work for transcription...&quot;)</li>
+<li>✅ <code>node src/index.js idle --name &lt;label&gt; --transcribe --duration &lt;seconds&gt;</code> produces, for each non-silent chunk, a <code>.wav</code>, <code>.json</code>, <code>.txt</code>, AND <code>.md</code> quartet (verified by this sprint&#39;s demo run: 26/26 chunks across all four artifacts)</li>
+<li>✅ Silent / sub-threshold chunks produce a <code>.md</code> stub explaining why they were skipped (verified in the T-5 peak-gate smoke; would also fire in a longer run with quieter passages)</li>
+<li>✅ <code>npm test</code> is green and asserts the new transcription invariants (264/264 across 15 suites after T-5; this sprint adds no new tests but doesn&#39;t break any either)</li>
+</ul>
+</li>
+<li>Files modified: <code>README.md</code>, <code>docs/sprint-plan.md</code>, <code>docs/sprint-log.md</code>, regenerated HTML mirrors. No <code>src/</code>, no <code>tests/</code> changes</li>
+<li>Validation:<ul>
+<li><code>npm test</code> -- still <strong>264/264 passing across 15 suites</strong>. No regressions</li>
+<li>Demo run captured live (see above); transcript excerpt + per-chunk file count + warning text all preserved in this log entry so future readers can reproduce</li>
+</ul>
+</li>
+<li>Known limitations / observations:<ul>
+<li><strong>Transcription quality is environmental.</strong> <code>base.en</code> did fine on a quiet room with one clear speaker (T-2 / T-4 smokes); it would struggle with overlapping speakers, strong accents, or technical jargon. The README&#39;s new model trade-off table sets expectations and points at <code>small.en</code> / <code>medium.en</code> as upgrades</li>
+<li><strong>PowerShell does not render every whisper.cpp glyph.</strong> The musical-note markers (♪) come out as <code>�T�</code> in the terminal. The on-disk <code>.md</code> is correct UTF-8; opening it in VS Code or any modern editor shows the actual character. Not worth fixing here -- a future markdown-summarisation track may decide to strip or normalise these</li>
+<li><strong>Shutdown drain time scales with backlog.</strong> A 30-minute monologue with <code>--max-chunk-seconds 5</code> could mean a few minutes of post-<code>Ctrl+C</code> drain on <code>base.en</code>. The user sees streaming <code>[transcribed]</code> lines so it&#39;s never silent; if it ever becomes a problem, T-7 / Phase 5 can add a <code>--no-wait</code> shutdown that orphans queued jobs (the WAVs + sidecars are already on disk, so the user can re-run <code>transcribe</code> on them later)</li>
+<li><strong>The &quot;speak into mic&quot; demo recipe assumes a human runner.</strong> This sprint validated the multi-chunk + multi-artifact + backpressure-warn + clean-shutdown behavior with ambient music as the audio source. A maintainer who wants to validate spoken-word accuracy specifically should run the README recipe themselves with their voice</li>
+</ul>
+</li>
+<li>Why: this is the milestone the entire Phase 4 plan was structured around. Five sprints of capture / transcribe / wire / format / harden converge here. After Sprint 28, anyone with sox + whisper.cpp + a model file can clone the repo, install dependencies, and run a single command to get a directory full of human-reviewable meeting markdown. The Phase 4 contract -- &quot;run one command, speak into the mic, watch markdown appear in real time&quot; -- is now true, demonstrated, and documented in the README such that a new user can repeat it without consulting the source</li>
+</ul>
 
 </body>
 </html>

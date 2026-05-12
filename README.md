@@ -235,6 +235,66 @@ that something is wrong (CPU saturated, model too large, silence threshold
 too low). A single retry is attempted on any non-zero whisper-cli exit,
 which catches transient mapping races without masking persistent failures.
 
+### Live demo — speak, watch transcripts appear
+
+This is the canonical Phase 4 demo. It proves end-to-end that LocalRecorder
+captures, chunks, and transcribes spoken audio without intervention. Total
+time: ~60 seconds of wall clock; you do not need to install anything beyond
+the prerequisites above.
+
+```bash
+node src/index.js idle --name t6-demo --transcribe \
+  --threshold 0.5 --silence 2 --duration 60
+```
+
+While it runs:
+
+1. **Speak two or three sentences** with ~3 s pauses between them. Each
+   pause longer than `--silence 2` ends the current chunk and rotates the
+   recorder to a fresh one.
+2. **In another terminal**, watch the session directory fill up:
+   ```bash
+   ls recordings/t6-demo/
+   ```
+   You should see, per chunk, a `.wav` appear first, then within a few
+   seconds a matching `.json`, then `.txt`, then `.md`. The `.md` is the
+   user-facing artifact -- open one in any editor and you will see the
+   heading, metadata block, file links, and the transcript.
+3. **On `Ctrl+C` or when the duration expires**, the recorder waits for any
+   queued transcripts to finish before exiting. You will see
+   `[transcribed]` lines streaming as the queue drains.
+
+Acceptance criteria (per `docs/sprint-plan.md`):
+
+- Every captured WAV has a sidecar (`.json`) and a markdown (`.md`).
+- Loud-enough chunks also have a `.txt`. Silent chunks have a `.md` stub
+  explaining the skip.
+- No `sox` or `whisper-cli` processes are left running after Ctrl+C.
+
+If transcription accuracy is disappointing on `ggml-base.en.bin` (the
+default), step up to a bigger model -- see the table below.
+
+### Model trade-offs
+
+`whisper.cpp` ships multiple ggml models. Bigger = better accuracy but
+slower and more memory. The realtime ratios below are rough CPU estimates
+for `whisper-cli`'s default settings on a typical modern laptop; your
+mileage will vary, especially on integrated GPUs or older silicon. Linear
+fit on the announced relative timings is "each step up roughly halves the
+realtime ratio".
+
+| Model | Size on disk | Typical CPU speed | Accuracy (English) | Recommended for |
+|---|---|---|---|---|
+| `ggml-tiny.en.bin` | ~75 MB | ~5–10x faster than realtime | Rough; misses unusual words | Quick keyword search, live captioning of a single clear speaker |
+| `ggml-base.en.bin` | ~141 MB | ~2–4x faster than realtime | Decent for clear speech in a quiet room | Default; solo dictation and meeting notes |
+| `ggml-small.en.bin` | ~466 MB | ~realtime to 1.5x | Good; handles light accents and multi-speaker | Routine meetings with 2–5 people |
+| `ggml-medium.en.bin` | ~1.5 GB | ~0.5x realtime | Very good; handles accents and jargon | Important meetings, technical content |
+| `ggml-large-v3.bin` | ~3.0 GB | ~0.2–0.3x realtime | Best available locally | Production transcription where accuracy matters more than turnaround |
+
+Switch models per session with `--model models/ggml-medium.en.bin`. Mind
+the disk / memory cost: medium and large are big enough to noticeably
+impact a small laptop SSD if you keep multiple copies around.
+
 ## Development
 
 Follow MDM (Markdown-Driven Development) workflow with incremental sprints. Each sprint ends with commit, validation, and documentation update.

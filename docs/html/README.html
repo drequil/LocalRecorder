@@ -332,6 +332,94 @@ of loudness). If transcription starts falling behind capture, a one-shot
 that something is wrong (CPU saturated, model too large, silence threshold
 too low). A single retry is attempted on any non-zero whisper-cli exit,
 which catches transient mapping races without masking persistent failures.</p>
+<h3>Live demo — speak, watch transcripts appear</h3>
+<p>This is the canonical Phase 4 demo. It proves end-to-end that LocalRecorder
+captures, chunks, and transcribes spoken audio without intervention. Total
+time: ~60 seconds of wall clock; you do not need to install anything beyond
+the prerequisites above.</p>
+<pre><code class="language-bash">node src/index.js idle --name t6-demo --transcribe \
+  --threshold 0.5 --silence 2 --duration 60
+</code></pre>
+<p>While it runs:</p>
+<ol>
+<li><strong>Speak two or three sentences</strong> with ~3 s pauses between them. Each
+pause longer than <code>--silence 2</code> ends the current chunk and rotates the
+recorder to a fresh one.</li>
+<li><strong>In another terminal</strong>, watch the session directory fill up:<pre><code class="language-bash">ls recordings/t6-demo/
+</code></pre>
+You should see, per chunk, a <code>.wav</code> appear first, then within a few
+seconds a matching <code>.json</code>, then <code>.txt</code>, then <code>.md</code>. The <code>.md</code> is the
+user-facing artifact -- open one in any editor and you will see the
+heading, metadata block, file links, and the transcript.</li>
+<li><strong>On <code>Ctrl+C</code> or when the duration expires</strong>, the recorder waits for any
+queued transcripts to finish before exiting. You will see
+<code>[transcribed]</code> lines streaming as the queue drains.</li>
+</ol>
+<p>Acceptance criteria (per <code>docs/sprint-plan.md</code>):</p>
+<ul>
+<li>Every captured WAV has a sidecar (<code>.json</code>) and a markdown (<code>.md</code>).</li>
+<li>Loud-enough chunks also have a <code>.txt</code>. Silent chunks have a <code>.md</code> stub
+explaining the skip.</li>
+<li>No <code>sox</code> or <code>whisper-cli</code> processes are left running after Ctrl+C.</li>
+</ul>
+<p>If transcription accuracy is disappointing on <code>ggml-base.en.bin</code> (the
+default), step up to a bigger model -- see the table below.</p>
+<h3>Model trade-offs</h3>
+<p><code>whisper.cpp</code> ships multiple ggml models. Bigger = better accuracy but
+slower and more memory. The realtime ratios below are rough CPU estimates
+for <code>whisper-cli</code>&#39;s default settings on a typical modern laptop; your
+mileage will vary, especially on integrated GPUs or older silicon. Linear
+fit on the announced relative timings is &quot;each step up roughly halves the
+realtime ratio&quot;.</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Size on disk</th>
+<th>Typical CPU speed</th>
+<th>Accuracy (English)</th>
+<th>Recommended for</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>ggml-tiny.en.bin</code></td>
+<td>~75 MB</td>
+<td>~5–10x faster than realtime</td>
+<td>Rough; misses unusual words</td>
+<td>Quick keyword search, live captioning of a single clear speaker</td>
+</tr>
+<tr>
+<td><code>ggml-base.en.bin</code></td>
+<td>~141 MB</td>
+<td>~2–4x faster than realtime</td>
+<td>Decent for clear speech in a quiet room</td>
+<td>Default; solo dictation and meeting notes</td>
+</tr>
+<tr>
+<td><code>ggml-small.en.bin</code></td>
+<td>~466 MB</td>
+<td>~realtime to 1.5x</td>
+<td>Good; handles light accents and multi-speaker</td>
+<td>Routine meetings with 2–5 people</td>
+</tr>
+<tr>
+<td><code>ggml-medium.en.bin</code></td>
+<td>~1.5 GB</td>
+<td>~0.5x realtime</td>
+<td>Very good; handles accents and jargon</td>
+<td>Important meetings, technical content</td>
+</tr>
+<tr>
+<td><code>ggml-large-v3.bin</code></td>
+<td>~3.0 GB</td>
+<td>~0.2–0.3x realtime</td>
+<td>Best available locally</td>
+<td>Production transcription where accuracy matters more than turnaround</td>
+</tr>
+</tbody></table>
+<p>Switch models per session with <code>--model models/ggml-medium.en.bin</code>. Mind
+the disk / memory cost: medium and large are big enough to noticeably
+impact a small laptop SSD if you keep multiple copies around.</p>
 <h2>Development</h2>
 <p>Follow MDM (Markdown-Driven Development) workflow with incremental sprints. Each sprint ends with commit, validation, and documentation update.</p>
 
