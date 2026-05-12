@@ -169,8 +169,10 @@ By default both `record` and `idle` write under `./recordings/`, into a session 
 | `--threshold P` | idle | percent (0..100) | Silence detection threshold. Default `0.5`. Lower = more sensitive. |
 | `--silence N` | idle | seconds | Silence duration before a chunk rotates. Default `1.0`. |
 | `--max-chunk-seconds N` | idle | seconds | Force-rotate after N seconds even if the user is still talking. Off by default. |
-| `--transcribe` | idle | flag | Auto-transcribe each chunk on rotation; writes `<basename>.txt` sibling to the WAV. Requires whisper.cpp + model. Off by default. |
+| `--transcribe` | idle | flag | Auto-transcribe each chunk on rotation; writes `<basename>.txt` + `<basename>.md` siblings to the WAV. Requires whisper.cpp + model. Off by default. |
 | `--model <path>` | idle / transcribe | path | Path to a whisper.cpp ggml model. Default: `./models/ggml-base.en.bin`. For `idle`, only used when `--transcribe` is also set; failing existence check before capture starts. |
+| `--transcribe-min-peak P` | idle | number 0..1 (or 0..100 as %) | Skip chunks whose sidecar `peak` is below P (dead-air gate). Default `0.005` (~−46 dBFS). Skipped chunks still get a `.md` stub explaining why. `0` disables the gate. |
+| `--transcribe-queue-max N` | idle | positive number | Warn (once, debounced) when the transcription queue depth exceeds N. Default `5`. Capture is never blocked; the warning just tells you transcription is falling behind. `0` disables the warning. |
 | `--json` | transcribe | flag | Emit a JSON payload (`{ text, model, wav, durationMs, binary, txtPath, version, versionLabel }`) instead of plain text. |
 
 ### Per-chunk artifacts
@@ -181,8 +183,8 @@ In `idle` mode each chunk produces:
 |---|---|---|
 | `<basename>.wav` | yes | The captured audio (16 kHz mono 16-bit signed PCM). |
 | `<basename>.json` | yes | Sidecar metadata (schema v1): `{ version, wav, start, end, durationMs, audio, peak, peakDb, bytes }`. Empty placeholder chunks (sox waiting for audio that never arrived) are auto-deleted along with their sidecar slot. |
-| `<basename>.txt` | only with `--transcribe` | Verbatim whisper.cpp transcript. Empty file for silent / sub-threshold chunks (the transcript is genuinely empty, not missing). |
-| `<basename>.md` | only with `--transcribe` | Human-reviewable: heading with timestamp, metadata block, links to the three sibling files, transcript section. On transcription failure the `.md` is still written with a `_Transcription unavailable: <reason>_` stub so you never lose context for a chunk. |
+| `<basename>.txt` | with `--transcribe`, when the chunk is loud enough to transcribe | Verbatim whisper.cpp transcript. Empty file if whisper.cpp returned no speech but the chunk passed the peak gate. Absent entirely for chunks the peak gate skipped (see `<basename>.md`). |
+| `<basename>.md` | with `--transcribe`, every chunk | Human-reviewable: H1 heading with timestamp, metadata block, links to the sibling files, transcript section. The `.md` is the single artifact a user opens per chunk -- it always lands, whether transcription succeeded, failed, or was skipped by the peak gate. Failure reason and skip reason both appear inline in the transcript section as italicised stubs. |
 
 ### Example — leave it running for an hour
 
@@ -211,15 +213,27 @@ node src/index.js idle --name meeting --duration 3600 --threshold 0.5 --silence 
 ```
 
 Same chunk-on-silence behaviour as the plain `idle` example above, but each
-chunk gets a `<basename>.txt` transcript written next to its `.wav` and
-`.json` the moment whisper.cpp finishes (typically within a few seconds of
-rotation on CPU). Transcriptions run serially through an in-memory queue, so
-two long chunks in a row will queue rather than fight for CPU. On `Ctrl+C`
-or when `--duration` expires, the recorder waits for any queued transcripts
-to finish before exiting -- you won't lose the tail of a meeting just
-because you stopped capture early. If `--model <path>` is omitted, the
-default `./models/ggml-base.en.bin` is used; missing-model paths fail fast
-before capture starts.
+chunk gets a `<basename>.txt` transcript and a human-reviewable
+`<basename>.md` written next to its `.wav` and `.json` the moment
+whisper.cpp finishes (typically within a few seconds of rotation on CPU).
+Transcriptions run serially through an in-memory queue, so two long chunks
+in a row will queue rather than fight for CPU. On `Ctrl+C` or when
+`--duration` expires, the recorder waits for any queued transcripts to
+finish before exiting -- you won't lose the tail of a meeting just because
+you stopped capture early. If `--model <path>` is omitted, the default
+`./models/ggml-base.en.bin` is used; missing-model paths fail fast before
+capture starts.
+
+By default chunks whose sidecar `peak` is below `0.005` (~−46 dBFS) are
+**skipped**: they get a `.md` stub explaining the skip but no `.txt` and no
+whisper.cpp CPU spent. This is the dead-air gate; tune via
+`--transcribe-min-peak P` (set to `0` to transcribe every chunk regardless
+of loudness). If transcription starts falling behind capture, a one-shot
+`[transcribe backlog]` warning fires at queue depth `--transcribe-queue-max
+5` (default); capture is never blocked, but you get an actionable signal
+that something is wrong (CPU saturated, model too large, silence threshold
+too low). A single retry is attempted on any non-zero whisper-cli exit,
+which catches transient mapping races without masking persistent failures.
 
 ## Development
 

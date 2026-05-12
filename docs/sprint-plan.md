@@ -228,7 +228,7 @@ Same shape as Phase 3A/3B: prove the foundation before integrating.
 | T-2 | Transcribe a known-good WAV via CLI | `node src/index.js transcribe <file>` prints text from a single WAV | ✅ |
 | T-3 | Wire transcription into idle rotation | Each rotated chunk is auto-transcribed; transcript stored next to the WAV (sibling `<basename>.txt`); CLI shutdown drains the queue | ✅ |
 | T-4 | Per-chunk markdown persistence | `.md` per chunk combines transcript + sidecar metadata for human review; failure-stub `.md` when transcription fails | ✅ |
-| T-5 | Resilience: retries, skip empty, error handling | Transcription survives bad chunks, slow runs, and silent rooms | ⏳ |
+| T-5 | Resilience: retries, skip empty, error handling | Transcription survives bad chunks, slow runs, and silent rooms via single retry + peak-gate skip + debounced backlog warning | ✅ |
 | T-6 | End-to-end "speak → see markdown update" demo | Documented full run from `idle` start to live `.md` updates | ⏳ |
 
 Six sprints; ~30–90 minutes each. After T-2 you can demo "transcribe a file". After T-4 the per-chunk pipeline is feature-complete. T-5 hardens it. T-6 is the milestone the user actually asked for.
@@ -283,7 +283,7 @@ Split into two mini-sprints since the queue was a reusable primitive worth its o
 - **Rollback:** stop writing `.md`; the JSON + WAV + TXT trio still works.
 - **Risk:** schema drift — if T-3 chose sidecar-extension over sibling-`.txt`, the formatter needs to read the transcript from the sidecar instead of a sibling file. Plan for both shapes in the formatter signature.
 
-### T-5 — Resilience: retries, skip empty, error handling
+### T-5 — Resilience: retries, skip empty, error handling (✅ Completed in Sprint 27)
 
 - **Goal:** transcription survives bad inputs and slow runs without taking the capture pipeline down. The user should be able to leave `idle --transcribe` running for an hour and not have a single failed chunk corrupt the rest of the session.
 - **Touches:** `src/transcribe.js` (add retry-with-backoff for transient failures), `src/audioRecorder.js` (peak gating: skip transcription entirely when `peak < threshold`), tests.

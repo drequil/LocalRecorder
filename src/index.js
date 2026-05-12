@@ -102,6 +102,11 @@ const IDLE_FLAGS = {
   '--root': { type: 'string', as: 'root' },
   '--transcribe': { type: 'flag', as: 'transcribe' },
   '--model': { type: 'string', as: 'transcribeModel' },
+  // T-5: peak gating. Accepts a number in [0, 1]; 0 disables the gate.
+  // Validated as `percent` to reuse the 0..100 / 0..1 dual-parse helper.
+  '--transcribe-min-peak': { type: 'percent', as: 'transcribeMinPeak' },
+  // T-5: queue backlog warning threshold. 0 disables.
+  '--transcribe-queue-max': { type: 'positiveNumber', as: 'transcribeQueueMax' },
 };
 
 const LISTEN_FLAGS = {
@@ -125,6 +130,7 @@ function printHelp() {
   console.log('           [--threshold P] [--silence N] [--device <id>]');
   console.log('           [--duration N] [--max-chunk-seconds N]');
   console.log('           [--transcribe] [--model <path>]');
+  console.log('           [--transcribe-min-peak P] [--transcribe-queue-max N]');
   console.log('  transcribe <file.wav> [--model <path>] [--json]        Transcribe one WAV via whisper.cpp CLI');
   console.log('  help                                                   Show this help');
   console.log('');
@@ -142,8 +148,10 @@ function printHelp() {
   console.log('  --silence N             Silence duration before rotation in seconds (positive; default 1.0)');
   console.log('  --device <id>           Audio input device id (Windows waveaudio index; default 0)');
   console.log('  --max-chunk-seconds N   Force-rotate a chunk after N seconds even without silence');
-  console.log('  --transcribe            Auto-transcribe each idle chunk; writes <basename>.txt next to the .wav');
+  console.log('  --transcribe            Auto-transcribe each idle chunk; writes <basename>.txt + .md next to .wav');
   console.log('  --model <path>          Whisper.cpp ggml model path (default ./models/ggml-base.en.bin)');
+  console.log('  --transcribe-min-peak P Skip chunks whose sidecar peak < P (default 0.005 / ~-46 dBFS); 0 disables');
+  console.log('  --transcribe-queue-max N  Warn when transcription queue depth > N (default 5); 0 disables');
   console.log('  --json                  Emit transcribe result as JSON instead of plain text');
 }
 
@@ -177,6 +185,8 @@ function parseIdleArgs(args) {
     root: flags.root != null ? flags.root : null,
     transcribe: flags.transcribe === true,
     transcribeModel: flags.transcribeModel != null ? flags.transcribeModel : null,
+    transcribeMinPeak: flags.transcribeMinPeak != null ? flags.transcribeMinPeak : null,
+    transcribeQueueMax: flags.transcribeQueueMax != null ? flags.transcribeQueueMax : null,
   };
 }
 
@@ -413,6 +423,8 @@ async function main(argv) {
       maxChunkSeconds: parsed.maxChunkSeconds,
       transcribe: parsed.transcribe,
       transcribeModel: parsed.transcribeModel,
+      transcribeMinPeak: parsed.transcribeMinPeak,
+      transcribeQueueMax: parsed.transcribeQueueMax,
     });
   }
 

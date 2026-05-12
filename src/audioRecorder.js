@@ -90,16 +90,58 @@ function writeChunkMarkdownSibling({
   return mdPath;
 }
 
+// T-5: classify which transcription errors are worth retrying. Non-zero
+// whisper-cli exit (transcribeFile attaches err.exitCode) is retryable
+// because whisper occasionally hiccups on the first run -- model warmup,
+// transient model-file mapping race, etc. Pre-flight validation errors
+// (missing WAV / model / binary) are deterministic and will fail the same
+// way every time, so we skip the retry to keep the failure-log readable.
+function isRetryableTranscribeError(err) {
+  if (!err) return false;
+  if (err.exitCode != null) return true; // whisper-cli non-zero exit
+  return false;
+}
+
+// T-5: single retry on non-zero whisper-cli exit. No backoff -- transcription
+// is deterministic and a retry that helps will help on the next call. Logs
+// both attempts via console.warn so the user can see what happened. The
+// retry count is bounded to 1 by design; if it fails twice it will fail
+// forever and we want the failure log to be readable, not a stack of
+// repeated retries.
+async function transcribeWithRetry(job, { transcribeFn, fsImpl, maxRetries = 1, logger = console } = {}) {
+  let attempt = 0;
+  let lastError;
+  while (true) {
+    try {
+      return await defaultTranscribeRun(job, { transcribeFn, fsImpl });
+    } catch (err) {
+      lastError = err;
+      if (attempt >= maxRetries || !isRetryableTranscribeError(err)) {
+        throw err;
+      }
+      attempt += 1;
+      try {
+        logger.warn(
+          `[transcribe retry] ${path.relative(process.cwd(), job.wav)}: ` +
+          `attempt ${attempt + 1}/${maxRetries + 1} after exit ${err.exitCode}`,
+        );
+      } catch (_) { /* logger threw -- not worth blocking the retry */ }
+    }
+  }
+  /* unreachable */ /* eslint-disable-next-line no-unreachable */
+  throw lastError;
+}
+
 // T-4: Compose the transcription work with the per-chunk .md write so the
 // queue worker produces .txt + .md as a unit. Always attempts the .md write,
 // even on transcription failure -- failure-stub markdown is still useful to
 // the user. The .md write itself is best-effort; if it throws we log but do
 // NOT mask the underlying transcription outcome.
-async function runWithMarkdown(job, { transcribeFn, fsImpl = fs } = {}) {
+async function runWithMarkdown(job, { transcribeFn, fsImpl = fs, maxRetries = 1, logger = console } = {}) {
   let transcribeResult = null;
   let transcribeError = null;
   try {
-    transcribeResult = await defaultTranscribeRun(job, { transcribeFn, fsImpl });
+    transcribeResult = await transcribeWithRetry(job, { transcribeFn, fsImpl, maxRetries, logger });
   } catch (e) {
     transcribeError = e;
   }
@@ -134,6 +176,9 @@ class AudioRecorder {
       transcribeModel = DEFAULT_MODEL_PATH,
       transcribeFn,
       transcribeLogger = null,
+      transcribeMinPeak = 0.005,
+      transcribeQueueMax = 5,
+      transcribeRetries = 1,
       ...rest
     } = options;
     this.options = {
@@ -159,9 +204,31 @@ class AudioRecorder {
     // concurrent recorders don't share a worker.
     this.transcribe = transcribe === true;
     this.transcribeModel = transcribeModel;
+    // T-5: peak gating threshold. Chunks whose sidecar peak < this are
+    // marked 'skipped' with a stub .md and never enter the transcription
+    // queue. Default 0.005 (~-46 dBFS) is well above typical room hum but
+    // below conversational speech. Set to 0 to disable the gate (every
+    // chunk goes to whisper).
+    this.transcribeMinPeak = Number.isFinite(transcribeMinPeak) && transcribeMinPeak >= 0
+      ? transcribeMinPeak
+      : 0.005;
+    // T-5: backpressure threshold. When queue length exceeds this, fire a
+    // one-shot warn (re-armed when the queue drains). Default 5; set to 0
+    // to disable the warning.
+    this.transcribeQueueMax = Number.isFinite(transcribeQueueMax) && transcribeQueueMax >= 0
+      ? transcribeQueueMax
+      : 5;
+    // T-5: max retries per chunk. 1 = whisper-cli is tried twice on non-zero
+    // exit. Set to 0 to disable retries entirely (one attempt only).
+    this.transcribeRetries = Number.isFinite(transcribeRetries) && transcribeRetries >= 0
+      ? Math.floor(transcribeRetries)
+      : 1;
     this.transcribeQueue = null;
     if (this.transcribe) {
-      const runFn = (job) => runWithMarkdown(job, { transcribeFn });
+      const runFn = (job) => runWithMarkdown(job, {
+        transcribeFn,
+        maxRetries: this.transcribeRetries,
+      });
       const logger = transcribeLogger || {
         onSuccess: (job, result) => {
           // Prefer announcing the .md (T-4's user-facing artifact); fall back
@@ -177,11 +244,20 @@ class AudioRecorder {
           const stubNote = error && error.mdPath ? ' (md stub written)' : '';
           console.warn(`[transcribe failed] ${rel}: ${error.message}${stubNote}`);
         },
+        onOverflow: (length) => {
+          console.warn(
+            `[transcribe backlog] queue depth ${length} exceeds --transcribe-queue-max ` +
+            `${this.transcribeQueueMax}. Capture is outrunning transcription; consider ` +
+            'raising --silence, lowering --max-chunk-seconds, or using a smaller model.',
+          );
+        },
       };
       this.transcribeQueue = createTranscribeQueue({
         run: runFn,
         onSuccess: logger.onSuccess,
         onFailure: logger.onFailure,
+        warnAt: this.transcribeQueueMax,
+        onOverflow: logger.onOverflow,
       });
     }
   }
@@ -226,9 +302,10 @@ class AudioRecorder {
           console.warn(`WAV header finalize skipped for ${filePath}: ${err.message}`);
         }
       }
+      let sidecarPayload = null;
       if (sidecar && sidecar.peakAcc && sidecar.format) {
         try {
-          const payload = buildSidecar({
+          sidecarPayload = buildSidecar({
             wavPath: filePath,
             start: sidecar.chunkStart,
             end: closedAt,
@@ -238,7 +315,7 @@ class AudioRecorder {
             peak: sidecar.peakAcc.peak,
             peakDb: sidecar.peakAcc.peakDb,
           });
-          writeSidecar(filePath, payload);
+          writeSidecar(filePath, sidecarPayload);
         } catch (err) {
           console.warn(`Sidecar write skipped for ${filePath}: ${err.message}`);
         }
@@ -248,8 +325,35 @@ class AudioRecorder {
       // row will run back-to-back rather than fighting for CPU. We do this
       // AFTER the sidecar write so consumers reading the .txt can rely on the
       // .json sibling already being on disk.
+      //
+      // T-5: peak gating. If the sidecar says the chunk's peak is below
+      // `transcribeMinPeak` (default 0.005), skip the queue entirely and
+      // write a `_skipped: ..._` .md stub immediately. Saves whisper.cpp
+      // CPU on dead-air chunks and gives the user explicit visibility into
+      // why a particular chunk's .txt is missing.
       if (this.transcribeQueue) {
-        this.transcribeQueue.enqueue({ wav: filePath, model: this.transcribeModel });
+        const peak = sidecarPayload != null ? sidecarPayload.peak : null;
+        const shouldSkip = this.transcribeMinPeak > 0
+          && peak != null
+          && Number.isFinite(peak)
+          && peak < this.transcribeMinPeak;
+        if (shouldSkip) {
+          const reason = `peak ${peak.toFixed(4)} below --transcribe-min-peak ${this.transcribeMinPeak}`;
+          try {
+            writeChunkMarkdownSibling({
+              wav: filePath,
+              transcribeStatus: 'skipped',
+              transcribeError: reason,
+            });
+          } catch (mdErr) {
+            console.warn(`[markdown failed] ${path.relative(process.cwd(), filePath)}: ${mdErr.message}`);
+          }
+          console.log(
+            `[transcribe skipped] ${path.relative(process.cwd(), filePath)} (${reason})`,
+          );
+        } else {
+          this.transcribeQueue.enqueue({ wav: filePath, model: this.transcribeModel });
+        }
       }
     });
   }
@@ -446,3 +550,5 @@ module.exports.WHISPER_AUDIO_FORMAT = WHISPER_AUDIO_FORMAT;
 module.exports.defaultTranscribeRun = defaultTranscribeRun;
 module.exports.runWithMarkdown = runWithMarkdown;
 module.exports.writeChunkMarkdownSibling = writeChunkMarkdownSibling;
+module.exports.transcribeWithRetry = transcribeWithRetry;
+module.exports.isRetryableTranscribeError = isRetryableTranscribeError;

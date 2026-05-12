@@ -353,8 +353,8 @@
 <tr>
 <td>T-5</td>
 <td>Resilience: retries, skip empty, error handling</td>
-<td>Transcription survives bad chunks, slow runs, and silent rooms</td>
-<td>⏳</td>
+<td>Transcription survives bad chunks, slow runs, and silent rooms via single retry + peak-gate skip + debounced backlog warning</td>
+<td>✅</td>
 </tr>
 <tr>
 <td>T-6</td>
@@ -424,7 +424,7 @@
 <li><strong>Rollback:</strong> stop writing <code>.md</code>; the JSON + WAV + TXT trio still works.</li>
 <li><strong>Risk:</strong> schema drift — if T-3 chose sidecar-extension over sibling-<code>.txt</code>, the formatter needs to read the transcript from the sidecar instead of a sibling file. Plan for both shapes in the formatter signature.</li>
 </ul>
-<h3>T-5 — Resilience: retries, skip empty, error handling</h3>
+<h3>T-5 — Resilience: retries, skip empty, error handling (✅ Completed in Sprint 27)</h3>
 <ul>
 <li><strong>Goal:</strong> transcription survives bad inputs and slow runs without taking the capture pipeline down. The user should be able to leave <code>idle --transcribe</code> running for an hour and not have a single failed chunk corrupt the rest of the session.</li>
 <li><strong>Touches:</strong> <code>src/transcribe.js</code> (add retry-with-backoff for transient failures), <code>src/audioRecorder.js</code> (peak gating: skip transcription entirely when <code>peak &lt; threshold</code>), tests.</li>

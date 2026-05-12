@@ -30,7 +30,13 @@
 
 function noop() {}
 
-function createTranscribeQueue({ run, onSuccess = noop, onFailure = noop } = {}) {
+function createTranscribeQueue({
+  run,
+  onSuccess = noop,
+  onFailure = noop,
+  warnAt = 0,
+  onOverflow = noop,
+} = {}) {
   if (typeof run !== 'function') {
     throw new TypeError('createTranscribeQueue: `run` must be a function');
   }
@@ -40,12 +46,24 @@ function createTranscribeQueue({ run, onSuccess = noop, onFailure = noop } = {})
   if (typeof onFailure !== 'function') {
     throw new TypeError('createTranscribeQueue: `onFailure` must be a function if provided');
   }
+  if (typeof onOverflow !== 'function') {
+    throw new TypeError('createTranscribeQueue: `onOverflow` must be a function if provided');
+  }
+  if (!Number.isFinite(warnAt) || warnAt < 0) {
+    throw new TypeError('createTranscribeQueue: `warnAt` must be a finite non-negative number');
+  }
 
   // `head` is the tail of the current job chain. New jobs `.then` onto it so
   // their work waits for everything previously enqueued. Errors inside each
   // job are caught locally so they do not poison subsequent jobs in the chain.
   let head = Promise.resolve();
   let pending = 0;
+
+  // Debounced overflow warning: fires onOverflow(length) the first time
+  // pending crosses `warnAt` from below, then stays silent until pending
+  // drops to `warnAt - 1` or lower. This keeps a sustained backlog from
+  // spamming the log on every enqueue. warnAt=0 disables the warning entirely.
+  let overflowArmed = true;
 
   function safe(fn, ...args) {
     try {
@@ -56,8 +74,19 @@ function createTranscribeQueue({ run, onSuccess = noop, onFailure = noop } = {})
     }
   }
 
+  function maybeWarnOverflow() {
+    if (warnAt <= 0) return;
+    if (pending > warnAt && overflowArmed) {
+      overflowArmed = false;
+      safe(onOverflow, pending);
+    } else if (pending < warnAt && !overflowArmed) {
+      overflowArmed = true;
+    }
+  }
+
   function enqueue(job) {
     pending += 1;
+    maybeWarnOverflow();
 
     const next = head.then(async () => {
       let result;
@@ -66,10 +95,12 @@ function createTranscribeQueue({ run, onSuccess = noop, onFailure = noop } = {})
       } catch (error) {
         safe(onFailure, job, error);
         pending -= 1;
+        maybeWarnOverflow();
         return { ok: false, error };
       }
       safe(onSuccess, job, result);
       pending -= 1;
+      maybeWarnOverflow();
       return { ok: true, result };
     });
     head = next;

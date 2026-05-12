@@ -12,6 +12,8 @@ function expectIdleShape(overrides = {}) {
     root: null,
     transcribe: false,
     transcribeModel: null,
+    transcribeMinPeak: null,
+    transcribeQueueMax: null,
     ...overrides,
   };
 }
@@ -98,6 +100,24 @@ describe('parseIdleArgs', () => {
     const r = parseIdleArgs(['./r', '--model', 'models/medium.en.bin']);
     expect(r.transcribe).toBe(false);
     expect(r.transcribeModel).toBe('models/medium.en.bin');
+  });
+
+  test('parses --transcribe-min-peak as a percent (0..100 also accepted)', () => {
+    expect(parseIdleArgs(['./r', '--transcribe-min-peak', '0.01']).transcribeMinPeak).toBe(0.01);
+    expect(parseIdleArgs(['./r', '--transcribe-min-peak', '5']).transcribeMinPeak).toBe(5); // 5% form
+    expect(parseIdleArgs(['./r', '--transcribe-min-peak', '0']).transcribeMinPeak).toBe(0);
+  });
+
+  test('rejects --transcribe-min-peak outside the 0..100 range', () => {
+    expect(parseIdleArgs(['./r', '--transcribe-min-peak', '-1']).error).toMatch(/0\.\.100/);
+    expect(parseIdleArgs(['./r', '--transcribe-min-peak', '101']).error).toMatch(/0\.\.100/);
+    expect(parseIdleArgs(['./r', '--transcribe-min-peak', 'abc']).error).toMatch(/0\.\.100/);
+  });
+
+  test('parses --transcribe-queue-max as a positive number', () => {
+    expect(parseIdleArgs(['./r', '--transcribe-queue-max', '10']).transcribeQueueMax).toBe(10);
+    expect(parseIdleArgs(['./r', '--transcribe-queue-max', '0']).error).toMatch(/positive number/);
+    expect(parseIdleArgs(['./r', '--transcribe-queue-max', '-3']).error).toMatch(/positive number/);
   });
 });
 

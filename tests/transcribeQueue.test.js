@@ -225,6 +225,90 @@ describe('failure handling', () => {
   });
 });
 
+describe('overflow warning (T-5 backpressure)', () => {
+  test('does not fire when warnAt is 0 (disabled)', async () => {
+    const onOverflow = jest.fn();
+    const q = createTranscribeQueue({
+      run: async (j) => j.id,
+      onOverflow,
+      warnAt: 0,
+    });
+    for (let i = 0; i < 20; i++) q.enqueue({ id: i });
+    await q.drain();
+    expect(onOverflow).not.toHaveBeenCalled();
+  });
+
+  test('fires when pending crosses warnAt from below', async () => {
+    const onOverflow = jest.fn();
+    const slow = defer();
+    const q = createTranscribeQueue({
+      run: jest.fn()
+        .mockImplementationOnce(() => slow.promise) // hold the first job
+        .mockImplementation(async (j) => j.id),
+      onOverflow,
+      warnAt: 3,
+    });
+    // Pending values: 1, 2, 3, 4 -> overflow on the 4th enqueue.
+    q.enqueue({ id: 'a' });
+    q.enqueue({ id: 'b' });
+    q.enqueue({ id: 'c' });
+    expect(onOverflow).not.toHaveBeenCalled(); // pending=3 is the boundary, not above
+    q.enqueue({ id: 'd' });
+    expect(onOverflow).toHaveBeenCalledTimes(1);
+    expect(onOverflow).toHaveBeenCalledWith(4);
+    // Further enqueues while still above warnAt do NOT re-fire (debounced).
+    q.enqueue({ id: 'e' });
+    q.enqueue({ id: 'f' });
+    expect(onOverflow).toHaveBeenCalledTimes(1);
+
+    slow.resolve('a-done');
+    await q.drain();
+  });
+
+  test('re-arms after pending drains below warnAt and crosses again', async () => {
+    const onOverflow = jest.fn();
+    const q = createTranscribeQueue({
+      run: async (j) => j.id,
+      onOverflow,
+      warnAt: 2,
+    });
+    // First overflow burst.
+    q.enqueue({ id: 1 });
+    q.enqueue({ id: 2 });
+    q.enqueue({ id: 3 }); // pending=3 > 2 -> fire
+    expect(onOverflow).toHaveBeenCalledTimes(1);
+    await q.drain();
+    // Second burst -- must fire again because we crossed back below.
+    q.enqueue({ id: 4 });
+    q.enqueue({ id: 5 });
+    q.enqueue({ id: 6 }); // crosses again
+    expect(onOverflow).toHaveBeenCalledTimes(2);
+    await q.drain();
+  });
+
+  test('throwing onOverflow does not poison the queue', async () => {
+    const q = createTranscribeQueue({
+      run: async (j) => j.id,
+      onOverflow: () => { throw new Error('logger boom'); },
+      warnAt: 1,
+    });
+    q.enqueue({ id: 'a' });
+    q.enqueue({ id: 'b' }); // triggers overflow
+    const r = await q.enqueue({ id: 'c' });
+    expect(r).toEqual({ ok: true, result: 'c' });
+    await q.drain();
+  });
+
+  test('validates warnAt and onOverflow at construction time', () => {
+    expect(() => createTranscribeQueue({ run: () => {}, warnAt: -1 }))
+      .toThrow(/warnAt.*non-negative/);
+    expect(() => createTranscribeQueue({ run: () => {}, warnAt: 'nope' }))
+      .toThrow(/warnAt.*non-negative/);
+    expect(() => createTranscribeQueue({ run: () => {}, onOverflow: 'bad' }))
+      .toThrow(/onOverflow.*function/);
+  });
+});
+
 describe('length tracking and drain re-arming', () => {
   test('length reflects queued + running jobs', async () => {
     const aGate = defer();

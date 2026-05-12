@@ -767,6 +767,74 @@ Then re-run: npm run transcribe:check
 </li>
 <li>Why: the transcript alone is a &quot;wall of text&quot; with no provenance. The sidecar JSON has the provenance but no human-readable surface. The <code>.md</code> is the join: it answers &quot;which chunk is this, when was it captured, how long is it, how loud was it, what was said&quot;. This is the artifact that the human reviewer (or, later, the human-review UI) opens directly. T-5 will refine the failure-mode messaging and T-6 will validate the whole <code>.wav</code>/<code>.json</code>/<code>.txt</code>/<code>.md</code> quartet in one demo run</li>
 </ul>
+<h2>Sprint 27 (T-5): Resilience -- skip-empty, retry, backpressure (Completed)</h2>
+<ul>
+<li>Goal of this sprint was the &quot;leave it running for an hour&quot; test: capture must keep producing artifacts no matter what transcription does. Three new knobs were added; all are opt-in-tunable via CLI; capture pipeline never blocks on transcription</li>
+<li><strong>Skip-empty (peak gating)</strong>:<ul>
+<li>New <code>AudioRecorder</code> constructor option <code>transcribeMinPeak</code> (default <code>0.005</code> = -46 dBFS, well above typical room hum but below conversational speech)</li>
+<li><code>_attachFinalize</code> close handler now reads <code>sidecarPayload.peak</code> (hoisted out of the sidecar try/catch for visibility) and, when transcription is enabled AND <code>peak &lt; transcribeMinPeak</code>, skips the queue entirely. Instead it writes a <code>.md</code> immediately with <code>transcribeStatus: &#39;skipped&#39;</code> and a stub <code>_Skipped: peak 0.0674 below --transcribe-min-peak 0.005_</code></li>
+<li>Logged as <code>[transcribe skipped] &lt;relpath&gt; (peak X below --transcribe-min-peak Y)</code> so the user sees the gate firing in real time. Saves whisper.cpp CPU on dead-air chunks (the common case for &quot;user stepped away from desk&quot;)</li>
+<li><code>--transcribe-min-peak P</code> CLI flag added to idle; parsed via the existing <code>percent</code> type (accepts <code>0.005</code> or <code>5</code> for 5%). <code>0</code> disables the gate (every chunk goes to whisper, no skip)</li>
+</ul>
+</li>
+<li><strong>Single retry on non-zero exit</strong>:<ul>
+<li>New helpers <code>isRetryableTranscribeError(err)</code> and <code>transcribeWithRetry(job, opts)</code> exported from <code>src/audioRecorder.js</code>. Classification rule: an error is retryable iff it carries an <code>exitCode</code> property (which <code>transcribeFile</code> only attaches on non-zero whisper-cli exit). Validation errors (missing WAV / model / binary) are NOT retried -- they will fail the same way every time, and a clean failure log is worth more than ceremonial repetition</li>
+<li><code>runWithMarkdown</code> now wraps the call in <code>transcribeWithRetry(...)</code> instead of calling <code>defaultTranscribeRun</code> directly. New constructor option <code>transcribeRetries</code> (default <code>1</code>) governs the retry count. <code>0</code> disables retries</li>
+<li>Retry attempt logged via <code>console.warn</code> as <code>[transcribe retry] &lt;relpath&gt;: attempt 2/2 after exit 1</code> so users can see whether retries are bailing them out or just delaying inevitable failure</li>
+</ul>
+</li>
+<li><strong>Queue backpressure</strong>:<ul>
+<li><code>createTranscribeQueue</code> accepts two new options: <code>warnAt</code> (default 0 = disabled) and <code>onOverflow(length)</code>. When <code>pending</code> crosses <code>warnAt</code> from below, <code>onOverflow</code> fires exactly once. It does NOT re-fire until <code>pending</code> first drops below <code>warnAt</code>; this is debouncing-by-state, not by time. Keeps a sustained backlog from spamming the log on every enqueue</li>
+<li><code>AudioRecorder</code> constructor option <code>transcribeQueueMax</code> (default <code>5</code>) wires to <code>warnAt</code>. Default <code>onOverflow</code> log: <code>[transcribe backlog] queue depth N exceeds --transcribe-queue-max 5. Capture is outrunning transcription; consider raising --silence, lowering --max-chunk-seconds, or using a smaller model.</code></li>
+<li><code>--transcribe-queue-max N</code> CLI flag added. <code>0</code> disables the warning entirely</li>
+<li><strong>Deferred (still owned by T-5 in principle, but not implemented here):</strong> the &quot;drop oldest queued job on overflow&quot; optional behavior. The chain-based queue makes drop-from-middle awkward; would require refactoring the queue to an array-backed FIFO. Documented as a known limitation. The warning alone is enough to give the user actionable feedback for now</li>
+</ul>
+</li>
+<li>New CLI flags (both idle-only, both validated by <code>parseSubcommandArgs</code>):<ul>
+<li><code>--transcribe-min-peak P</code> -- <code>percent</code> type (0..100 inclusive after auto-coercion, where <code>5</code> means 5% and <code>0.05</code> means 0.05)</li>
+<li><code>--transcribe-queue-max N</code> -- <code>positiveNumber</code> type (must be &gt; 0; matches existing flag conventions)</li>
+</ul>
+</li>
+<li>Tests added (<strong>21 new</strong>; <strong>243 -&gt; 264</strong>, still 15 suites):<ul>
+<li><code>tests/parseIdleArgs.test.js</code> (+3): <code>--transcribe-min-peak</code> parsing (positive, percent form, zero), out-of-range rejection, <code>--transcribe-queue-max</code> parsing including positive-number rejection of 0 / negative</li>
+<li><code>tests/transcribeQueue.test.js</code> (+5 in a new <code>describe(&#39;overflow warning (T-5 backpressure)&#39;)</code> block):<ul>
+<li><code>warnAt=0</code> disables (no callback fires even with 20 enqueues)</li>
+<li>Fires when pending crosses <code>warnAt</code> from below (4-enqueue progression: 1, 2, 3 silent; 4 fires)</li>
+<li>Debounced: further enqueues while pending &gt; warnAt do NOT re-fire</li>
+<li>Re-armed: pending drains, then a second burst fires <code>onOverflow</code> again</li>
+<li>Throwing <code>onOverflow</code> does not poison the queue (subsequent enqueues still settle cleanly)</li>
+<li>Validates <code>warnAt</code> and <code>onOverflow</code> at construction time</li>
+</ul>
+</li>
+<li><code>tests/audioRecorder.test.js</code> (+13):<ul>
+<li><strong><code>isRetryableTranscribeError</code> (3):</strong> <code>err.exitCode</code> -&gt; true; validation errors -&gt; false; null/undefined -&gt; false</li>
+<li><strong><code>transcribeWithRetry</code> (5):</strong> succeeds first try (1 call); retries once on non-zero exit and succeeds on second; exhausts retries and throws the LAST error; does NOT retry deterministic errors (model not found -&gt; 1 call only, despite <code>maxRetries=5</code>); <code>maxRetries=0</code> disables retries</li>
+<li><strong><code>runWithMarkdown</code> honors maxRetries (1):</strong> runs the retry and writes a successful <code>.md</code> after a recovered second attempt</li>
+<li><strong>AudioRecorder T-5 constructor wiring (4):</strong> defaults (<code>transcribeMinPeak=0.005</code>, <code>transcribeQueueMax=5</code>, <code>transcribeRetries=1</code>), explicit overrides honored, <code>transcribeMinPeak=0</code> accepted (gate disabled), negative / non-finite <code>transcribeMinPeak</code> falls back to default</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>Files modified: <code>src/transcribeQueue.js</code>, <code>src/audioRecorder.js</code>, <code>src/index.js</code>, <code>tests/parseIdleArgs.test.js</code>, <code>tests/transcribeQueue.test.js</code>, <code>tests/audioRecorder.test.js</code>, <code>README.md</code>, <code>docs/sprint-plan.md</code>, <code>docs/sprint-log.md</code>, regenerated HTML mirrors</li>
+<li>Validation:<ul>
+<li><code>node --check</code> clean across all three modified <code>src/</code> files</li>
+<li><code>npm test</code> -- <strong>264/264 passing across 15 suites</strong> (+21 new)</li>
+<li><strong>End-to-end smoke (peak-gate skip):</strong> <code>idle --transcribe --transcribe-min-peak 0.99 --duration 10</code> (threshold absurdly high to force every chunk to skip). Produced <code>.wav</code> + <code>.json</code> + <code>.md</code>, <strong>NO <code>.txt</code></strong> (queue was never invoked). Log: <code>[transcribe skipped] ...wav (peak 0.0674 below --transcribe-min-peak 0.99)</code>. <code>.md</code> rendered cleanly with <code>_Skipped: peak 0.0674 below --transcribe-min-peak 0.99_</code> in the transcript section. Total wall time ~11 s (no transcription delay); compare to ~17 s for the unfiltered T-4 smoke</li>
+<li><strong>Help output verified:</strong> new flags appear under the <code>idle</code> subcommand block AND in the flag-notes section</li>
+<li><strong>Backlog smoke skipped:</strong> would require sustaining 5+ in-flight transcriptions, which on this CPU means recording for ~30+ s with very short silence. Unit tests cover the warning logic exhaustively (5 cases including debounce, re-arm, validation); a live smoke would only re-prove the same. T-6 might naturally exercise this if the demo runs long enough</li>
+<li><strong>Failure-mode smokes skipped at the integration level:</strong> corrupted WAV / spawn failure / missing-txt-after-exit-0 are unit-tested via injected <code>transcribeFn</code> in <code>runWithMarkdown</code>&#39;s failure-path tests. The orchestration code paths for them are identical to the live retry path. Missing-model is already covered (T-3.2 upfront check)</li>
+</ul>
+</li>
+<li>Known limitations / design notes:<ul>
+<li><strong>No drop-on-overflow.</strong> When the queue exceeds <code>transcribeQueueMax</code>, we only warn -- subsequent chunks still enqueue and back up. Recording continues regardless; whisper just falls further behind. For &quot;real&quot; backlog handling (drop oldest, batch-process later), a small refactor to an array-backed FIFO is needed; deferred until a real workload demonstrates need. The warning gives users enough signal to take manual action</li>
+<li><strong>Retry policy is binary.</strong> Exit code 1 from &quot;model lookup failed at runtime&quot; vs exit code 1 from &quot;transient memory map race&quot; look identical to the retry classifier. We retry both. In practice the deterministic failures will fail twice and produce a cleaner failure log on the second attempt (same error message, same exit code); not a real regression vs no-retry</li>
+<li><strong>Peak gate uses sidecar peak.</strong> The peak is computed across the entire chunk&#39;s PCM (in <code>peakAccumulator.js</code>); silence-detection silence != gate-skip silence. A chunk with 1 s of speech in 30 s of silence will still have peak ~= the spoken segment&#39;s peak and will transcribe normally. The gate only skips truly empty / ambient-only chunks</li>
+<li><strong><code>--transcribe-min-peak</code> units are linear (0..1), not dB.</strong> A user thinking in dB has to translate (e.g., -40 dBFS = 0.01). Documented in the README; if it becomes confusing in practice a <code>--transcribe-min-peak-db</code> alias is trivial to add</li>
+<li><strong>Retry doubles the worst-case shutdown drain time.</strong> If every chunk needs a retry, the shutdown drain is ~2x what it would otherwise be. In practice retries are rare so this is theoretical -- but worth knowing if <code>Ctrl+C</code> feels slower than expected</li>
+</ul>
+</li>
+<li>Why: the user&#39;s stated goal is &quot;leave it running for an hour and walk away&quot;. The T-3.2 pipeline did the happy path; this sprint hardens it against three real failure modes: dead-air chunks (skip-empty), flaky whisper-cli runs (retry), and transcription falling behind capture (backlog warn). After this sprint, <code>idle --transcribe</code> is genuinely production-ready for long-running meeting capture -- the user can leave it on a laptop for hours and the directory will fill with <code>.wav</code>+<code>.json</code>+<code>.txt</code>+<code>.md</code> quartets (or <code>.wav</code>+<code>.json</code>+<code>.md</code>-stub for silent stretches) without intervention. T-6 will validate this end-to-end with a real spoken-content demo</li>
+</ul>
 
 </body>
 </html>

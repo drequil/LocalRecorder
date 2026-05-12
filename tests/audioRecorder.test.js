@@ -598,6 +598,214 @@ describe('defaultTranscribeRun (filename normalisation)', () => {
   });
 });
 
+describe('T-5 resilience: retry classification + runWithMarkdown integration', () => {
+  const {
+    isRetryableTranscribeError,
+    transcribeWithRetry,
+    runWithMarkdown,
+  } = require('../src/audioRecorder');
+  const os = require('os');
+  const path = require('path');
+  const realFs = jest.requireActual('fs');
+
+  describe('isRetryableTranscribeError', () => {
+    test('non-zero whisper-cli exit (err.exitCode set) -> retryable', () => {
+      const e = new Error('exited with code 1');
+      e.exitCode = 1;
+      expect(isRetryableTranscribeError(e)).toBe(true);
+    });
+
+    test('validation errors (no exitCode) -> not retryable', () => {
+      expect(isRetryableTranscribeError(new Error('WAV file not found'))).toBe(false);
+      expect(isRetryableTranscribeError(new Error('Model file not found'))).toBe(false);
+      expect(isRetryableTranscribeError(new Error('whisper binary not found'))).toBe(false);
+    });
+
+    test('null / undefined -> not retryable', () => {
+      expect(isRetryableTranscribeError(null)).toBe(false);
+      expect(isRetryableTranscribeError(undefined)).toBe(false);
+    });
+  });
+
+  describe('transcribeWithRetry', () => {
+    let tmpdir;
+    beforeEach(() => {
+      tmpdir = realFs.mkdtempSync(path.join(os.tmpdir(), 'lr-retry-'));
+    });
+    afterEach(() => {
+      realFs.rmSync(tmpdir, { recursive: true, force: true });
+    });
+
+    test('succeeds on first attempt -> calls transcribeFn once', async () => {
+      const wav = path.join(tmpdir, 'a.wav');
+      realFs.writeFileSync(wav, Buffer.from('RIFF\0\0\0\0WAVE', 'binary'));
+      const transcribeFn = jest.fn(async () => ({
+        text: 'ok', model: 'm', wav, binary: 'whisper-cli', durationMs: 0,
+        txtPath: path.join(tmpdir, 'a.txt'), exitCode: 0,
+      }));
+      const result = await transcribeWithRetry({ wav, model: 'm' }, {
+        transcribeFn, fsImpl: realFs, maxRetries: 1, logger: { warn: jest.fn() },
+      });
+      expect(transcribeFn).toHaveBeenCalledTimes(1);
+      expect(result.text).toBe('ok');
+    });
+
+    test('retries once on non-zero exit, succeeds on the second attempt', async () => {
+      const wav = path.join(tmpdir, 'b.wav');
+      realFs.writeFileSync(wav, Buffer.from('RIFF\0\0\0\0WAVE', 'binary'));
+      const transcribeFn = jest.fn()
+        .mockImplementationOnce(async () => {
+          const e = new Error('exited with code 1');
+          e.exitCode = 1;
+          throw e;
+        })
+        .mockImplementationOnce(async () => ({
+          text: 'ok-second', model: 'm', wav, binary: 'whisper-cli', durationMs: 0,
+          txtPath: path.join(tmpdir, 'b.txt'), exitCode: 0,
+        }));
+      const warn = jest.fn();
+      const result = await transcribeWithRetry({ wav, model: 'm' }, {
+        transcribeFn, fsImpl: realFs, maxRetries: 1, logger: { warn },
+      });
+      expect(transcribeFn).toHaveBeenCalledTimes(2);
+      expect(result.text).toBe('ok-second');
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toMatch(/\[transcribe retry\]/);
+      expect(warn.mock.calls[0][0]).toMatch(/attempt 2\/2/);
+    });
+
+    test('gives up after exhausting retries and throws the last error', async () => {
+      const wav = path.join(tmpdir, 'c.wav');
+      realFs.writeFileSync(wav, Buffer.from('RIFF\0\0\0\0WAVE', 'binary'));
+      const failing = async () => {
+        const e = new Error('exited with code 2');
+        e.exitCode = 2;
+        throw e;
+      };
+      const transcribeFn = jest.fn().mockImplementation(failing);
+      await expect(
+        transcribeWithRetry({ wav, model: 'm' }, {
+          transcribeFn, fsImpl: realFs, maxRetries: 1, logger: { warn: () => {} },
+        }),
+      ).rejects.toMatchObject({ exitCode: 2 });
+      expect(transcribeFn).toHaveBeenCalledTimes(2); // 1 initial + 1 retry
+    });
+
+    test('does NOT retry deterministic errors (missing model, missing binary, etc.)', async () => {
+      const wav = path.join(tmpdir, 'd.wav');
+      realFs.writeFileSync(wav, Buffer.from('RIFF\0\0\0\0WAVE', 'binary'));
+      const transcribeFn = jest.fn().mockImplementation(async () => {
+        throw new Error('transcribe: model file not found: m');
+      });
+      await expect(
+        transcribeWithRetry({ wav, model: 'm' }, {
+          transcribeFn, fsImpl: realFs, maxRetries: 5, logger: { warn: () => {} },
+        }),
+      ).rejects.toThrow(/model file not found/);
+      expect(transcribeFn).toHaveBeenCalledTimes(1); // no retries
+    });
+
+    test('maxRetries=0 disables the retry entirely', async () => {
+      const wav = path.join(tmpdir, 'e.wav');
+      realFs.writeFileSync(wav, Buffer.from('RIFF\0\0\0\0WAVE', 'binary'));
+      const transcribeFn = jest.fn().mockImplementation(async () => {
+        const e = new Error('exited with code 1');
+        e.exitCode = 1;
+        throw e;
+      });
+      await expect(
+        transcribeWithRetry({ wav, model: 'm' }, {
+          transcribeFn, fsImpl: realFs, maxRetries: 0, logger: { warn: () => {} },
+        }),
+      ).rejects.toMatchObject({ exitCode: 1 });
+      expect(transcribeFn).toHaveBeenCalledTimes(1); // no retry
+    });
+  });
+
+  describe('runWithMarkdown honors maxRetries', () => {
+    let tmpdir;
+    beforeEach(() => {
+      tmpdir = realFs.mkdtempSync(path.join(os.tmpdir(), 'lr-rwm-retry-'));
+    });
+    afterEach(() => {
+      realFs.rmSync(tmpdir, { recursive: true, force: true });
+    });
+
+    test('runs the retry and reports success on the second attempt', async () => {
+      const stem = 'chunk-20260512-162301-489';
+      const wav = path.join(tmpdir, `${stem}.wav`);
+      realFs.writeFileSync(wav, Buffer.from('RIFF\0\0\0\0WAVE', 'binary'));
+      const sidecar = {
+        version: 1, wav: `${stem}.wav`, durationMs: 1000,
+        peak: 0.5, peakDb: -6, bytes: 16000,
+        start: '2026-05-12T21:23:01Z', end: '2026-05-12T21:23:02Z',
+        audio: { sampleRate: 16000, channels: 1, bitDepth: 16, encoding: 'signed-integer' },
+      };
+      realFs.writeFileSync(path.join(tmpdir, `${stem}.json`), JSON.stringify(sidecar));
+
+      const transcribeFn = jest.fn()
+        .mockImplementationOnce(async () => {
+          const e = new Error('exited with code 1');
+          e.exitCode = 1;
+          throw e;
+        })
+        .mockImplementationOnce(async () => ({
+          text: 'recovered', model: 'm', wav, binary: 'whisper-cli', durationMs: 5,
+          txtPath: path.join(tmpdir, `${stem}.txt`), exitCode: 0,
+        }));
+      const warn = jest.fn();
+      const result = await runWithMarkdown(
+        { wav, model: 'm' },
+        { transcribeFn, fsImpl: realFs, maxRetries: 1, logger: { warn } },
+      );
+      expect(result.text).toBe('recovered');
+      expect(transcribeFn).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledTimes(1);
+      // Success .md was written.
+      const md = realFs.readFileSync(path.join(tmpdir, `${stem}.md`), 'utf8');
+      expect(md).toContain('recovered');
+    });
+  });
+});
+
+describe('T-5 resilience: AudioRecorder peak gating + queue overflow', () => {
+  test('default constructor sets transcribeMinPeak=0.005, transcribeQueueMax=5, transcribeRetries=1', () => {
+    const r = new AudioRecorder({ transcribe: true, transcribeFn: jest.fn() });
+    expect(r.transcribeMinPeak).toBe(0.005);
+    expect(r.transcribeQueueMax).toBe(5);
+    expect(r.transcribeRetries).toBe(1);
+  });
+
+  test('explicit constructor overrides are honored', () => {
+    const r = new AudioRecorder({
+      transcribe: true,
+      transcribeFn: jest.fn(),
+      transcribeMinPeak: 0.02,
+      transcribeQueueMax: 10,
+      transcribeRetries: 2,
+    });
+    expect(r.transcribeMinPeak).toBe(0.02);
+    expect(r.transcribeQueueMax).toBe(10);
+    expect(r.transcribeRetries).toBe(2);
+  });
+
+  test('transcribeMinPeak=0 disables the gate (constructor accepts the zero)', () => {
+    const r = new AudioRecorder({
+      transcribe: true,
+      transcribeFn: jest.fn(),
+      transcribeMinPeak: 0,
+    });
+    expect(r.transcribeMinPeak).toBe(0);
+  });
+
+  test('negative / non-finite transcribeMinPeak falls back to default', () => {
+    const r1 = new AudioRecorder({ transcribe: true, transcribeFn: jest.fn(), transcribeMinPeak: -1 });
+    expect(r1.transcribeMinPeak).toBe(0.005);
+    const r2 = new AudioRecorder({ transcribe: true, transcribeFn: jest.fn(), transcribeMinPeak: NaN });
+    expect(r2.transcribeMinPeak).toBe(0.005);
+  });
+});
+
 describe('WHISPER_AUDIO_FORMAT contract', () => {
   const { WHISPER_AUDIO_FORMAT } = require('../src/audioRecorder');
 
