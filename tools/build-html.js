@@ -12,6 +12,7 @@ const OUT_DIR = path.join(ROOT, 'docs', 'html');
 const DOCS = [
   { src: 'README.md',            out: 'README.html',     title: 'LocalRecorder — README' },
   { src: '.instructions.md',     out: 'instructions.html', title: 'LocalRecorder — MDM Workflow Rules' },
+  { src: 'docs/quickstart.md',   out: 'quickstart.html',  title: 'LocalRecorder — Quickstart' },
   { src: 'docs/sprint-log.md',   out: 'sprint-log.html',  title: 'LocalRecorder — Sprint Log' },
   { src: 'docs/sprint-plan.md',  out: 'sprint-plan.html', title: 'LocalRecorder — Sprint Plan', optional: true },
 ];

@@ -874,6 +874,63 @@ Then re-run: npm run transcribe:check
 </li>
 <li>Why: this is the milestone the entire Phase 4 plan was structured around. Five sprints of capture / transcribe / wire / format / harden converge here. After Sprint 28, anyone with sox + whisper.cpp + a model file can clone the repo, install dependencies, and run a single command to get a directory full of human-reviewable meeting markdown. The Phase 4 contract -- &quot;run one command, speak into the mic, watch markdown appear in real time&quot; -- is now true, demonstrated, and documented in the README such that a new user can repeat it without consulting the source</li>
 </ul>
+<h2>Sprint 29 (T-7a): Per-session HTML transcript + <code>--silence 0</code> deterministic chunking (Completed)</h2>
+<ul>
+<li>Two field-driven fixes triggered by live use of the Phase 4 pipeline on the user&#39;s Windows machine in a noisy environment. Neither was foreseen in the original sprint plan; both are small, additive, and tested</li>
+<li><strong><code>--silence 0</code> disables sox&#39;s silence detector</strong>:<ul>
+<li>Field issue: with the documented <code>--threshold 0.01 --silence 60</code> config, chunks were still rotating every 1-3 s. The cause is environment-specific (room noise floor flickering around the sox threshold + Windows waveaudio driver behavior in node-record-lpcm16) and not worth chasing in detail. The deterministic fix is to bypass sox&#39;s silence detector entirely and rely on <code>--max-chunk-seconds</code> for rotation</li>
+<li><code>&#39;--silence&#39;</code> parser switched from <code>positiveNumber</code> to <code>nonNegativeNumber</code>. <code>0</code> is now a valid value</li>
+<li><code>AudioRecorder</code> adds <code>this.idleSilenceDisabled</code> (set when <code>idleSilenceSeconds === 0</code>) and passes <code>endOnSilence: !this.idleSilenceDisabled</code> to <code>recorder.record(...)</code>. <code>recorderPatch.js</code> already conditionally omitted the silence args when <code>endOnSilence</code> was falsy, so the sox invocation was already correct -- this sprint just exposes the toggle through to the CLI</li>
+<li>Help text updated. Existing parseIdleArgs test for <code>--silence 0 -&gt; error</code> rewritten to assert that <code>0</code> is accepted and surfaces to <code>idleSilenceSeconds === 0</code>; added rejection cases for <code>-1</code> and <code>abc</code></li>
+</ul>
+</li>
+<li><strong>Per-session HTML transcript</strong>:<ul>
+<li>Field requirement: &quot;The transcribe must all go into a single file. Let&#39;s make it HTML instead.&quot; Per-chunk <code>.md</code> files are great for chunk-level inspection but a long meeting wants ONE document the user can scroll</li>
+<li>New module <code>src/sessionTranscript.js</code>. Pure render helpers (<code>renderSessionDocumentInitial</code>, <code>renderChunkSectionHtml</code>, <code>spliceChunkSection</code>, <code>bumpChunkCount</code>) plus one side-effecting entry point (<code>appendChunkToSessionHtml</code>). The document is self-contained: inline <code>&lt;style&gt;</code>, no external CSS / JS, so it travels via copy / email without breaking. ASCII-only source (entities <code>&amp;mdash;</code> and <code>&amp;middot;</code> instead of literal Unicode) so PowerShell <code>Get-Content</code> displays it correctly and there&#39;s zero encoding ambiguity across editors</li>
+<li>Document structure pins two literal markers (<code>&lt;!-- CHUNKS:START --&gt;</code>, <code>&lt;!-- CHUNKS:END --&gt;</code>) plus a <code>COUNT</code> marker pair around the header chunk-count integer. The appender splices new <code>&lt;section&gt;</code> elements before the <code>CHUNKS:END</code> marker and increments the count -- O(file-size) per append, which is acceptable for sessions up to a few thousand chunks</li>
+<li>Each chunk section gets a class of <code>chunk ok</code> / <code>chunk skipped</code> / <code>chunk failed</code> so the inline CSS can colour failed / skipped chunks differently (orange left border, slightly faded)</li>
+<li>Heading per chunk: <code>HH:MM:SS (duration | peakDb | bytes)</code>. Compact, scannable, sortable. Full stem in the <code>title=</code> attribute for hover-disambiguation when two chunks share the same second</li>
+<li>The .md path and the HTML path both decorate any thrown error so <code>onFailure</code> can surface either. Best-effort writes -- a failed HTML write does NOT mask a successful transcription</li>
+</ul>
+</li>
+<li><code>src/audioRecorder.js</code> wiring:<ul>
+<li><code>runWithMarkdown</code> now calls <code>appendChunkToSessionHtml</code> after the per-chunk <code>.md</code> write, on both success and failure paths. Both writes share a small <code>readSidecarBestEffort(wav, fsImpl)</code> helper so they agree on the sidecar fallback shape</li>
+<li><code>_attachFinalize</code> peak-gate skip path also calls <code>appendChunkToSessionHtml</code> so skipped chunks appear in the session HTML with explicit &quot;Skipped: ...&quot; stubs, not silent gaps</li>
+<li>Default <code>onSuccess</code> log now announces <code>htmlPath</code> over <code>mdPath</code> over <code>txtPath</code> -- the single file the user follows live</li>
+</ul>
+</li>
+<li>Tests added (<strong>24 new</strong>; <strong>264 -&gt; 288</strong>, 15 -&gt; 16 suites; full suite still 100% pass):<ul>
+<li><code>tests/sessionTranscript.test.js</code> (24 tests):<ul>
+<li><strong>Format helpers (4):</strong> <code>escapeHtml</code> entity round-trip; <code>formatBytes</code> (B / KB / MB); <code>formatDuration</code> boundary at 60 s; <code>formatPeakDb</code> ASCII-minus</li>
+<li><strong><code>renderSessionDocumentInitial</code> (4):</strong> both markers present exactly once; session label is escaped (XSS injection attempt produces <code>&amp;lt;script&amp;gt;</code>); ISO start time appears; initial count is 0 between COUNT markers</li>
+<li><strong><code>renderChunkSectionHtml</code> (6):</strong> ok / empty / skipped / failed branches, escape coverage, heading format, missing-sidecar throws</li>
+<li><strong><code>spliceChunkSection</code> (3):</strong> insert before end marker; multiple splices preserve order; no-marker fallback appends to end (corrupt-doc recovery, no throw)</li>
+<li><strong><code>bumpChunkCount</code> (2):</strong> increments between markers; passes through unchanged when markers absent</li>
+<li><strong><code>appendChunkToSessionHtml</code> integration (4):</strong> first append creates the file; second append grows it; default session label is the dir basename; mixed ok / skipped / failed entries co-exist</li>
+<li><strong><code>transcriptHtmlPathFor</code> (1):</strong> dir + transcript.html composition</li>
+</ul>
+</li>
+<li><code>tests/parseIdleArgs.test.js</code> updated: existing <code>--silence 0</code> rejection test rewritten to assert acceptance + numeric value, plus <code>-1</code> and <code>abc</code> rejections via the new <code>nonNegativeNumber</code> parser</li>
+</ul>
+</li>
+<li>Files added: <code>src/sessionTranscript.js</code>, <code>tests/sessionTranscript.test.js</code></li>
+<li>Files modified: <code>src/audioRecorder.js</code>, <code>src/index.js</code>, <code>tests/parseIdleArgs.test.js</code>, <code>README.md</code>, <code>docs/quickstart.md</code>, <code>docs/sprint-log.md</code>, regenerated HTML mirrors</li>
+<li>Validation:<ul>
+<li><code>node --check</code> clean across the three modified <code>src/</code> files</li>
+<li><code>npm test</code> -- <strong>288/288 passing across 16 suites</strong> (+24 new). Full suite green</li>
+<li><strong>End-to-end smoke:</strong> <code>idle &lt;tmp&gt; --silence 0 --max-chunk-seconds 5 --transcribe --transcribe-min-peak 0 --duration 18</code>. Produced 4 chunks of 5 s each (last one truncated at 1.3 s by duration expiry). EVERY rotation logged <code>Max chunk seconds (5) reached, rotating: &lt;name&gt;</code> -- the silence detector did NOT fire even once, confirming <code>--silence 0</code> bypasses it. <code>transcript.html</code> grew from 0 to 2380 bytes across the run; final count between COUNT markers was <code>4</code>; all four chunks rendered as <code>class=&quot;chunk ok&quot;</code> sections (the room was effectively silent so whisper returned <code>[BLANK_AUDIO]</code>, which is correctly rendered as the transcript text). <code>[transcribed]</code> log line now points at <code>transcript.html</code> instead of the per-chunk <code>.md</code></li>
+</ul>
+</li>
+<li>Known limitations / observations:<ul>
+<li><strong><code>--silence 0</code> is a coarse workaround, not a fix for the underlying flakiness.</strong> A user with a well-behaved silence detector should still prefer <code>--silence N</code> for natural pause-driven chunking. The real fix would be to investigate why sox+waveaudio+node-record-lpcm16 sees premature silence on this machine; until then, <code>--silence 0</code> is the escape hatch</li>
+<li><strong>Append is O(file-size) per chunk.</strong> Each append reads + writes the whole transcript.html. For a session of 1000 chunks at ~600 bytes per section the file is ~600 KB; reading + rewriting that on each append is microseconds on SSD. For 100k+ chunks it would start to matter, but that&#39;s an unrealistic single-session workload. If it ever becomes a problem, an append-only &quot;open the file in r+, seek to the marker, splice in place&quot; approach is straightforward</li>
+<li><strong>No live-reload helper.</strong> The user has to refresh their browser to see new chunks. A <code>&lt;meta http-equiv=&quot;refresh&quot; content=&quot;10&quot;&gt;</code> would do it but feels heavy-handed; the user can use a watch-mode editor (VS Code&#39;s &quot;Open with Live Preview&quot;, or a one-liner <code>python -m http.server</code>) if they want auto-refresh</li>
+<li><strong>Per-chunk <code>.md</code> files still produced.</strong> Removing them would break T-4 acceptance and surprise the user. They&#39;re harmless -- ignore them or delete after the session if they bother you. T-8 / later sprint might toggle them via a flag</li>
+<li><strong>No close-on-shutdown finalisation.</strong> The HTML document is &quot;always valid&quot; -- it has the closing tags from the moment of creation; appends splice INSIDE the body. So if the process crashes mid-meeting the file is still openable. No need for an explicit &quot;session close&quot; step</li>
+</ul>
+</li>
+<li>Why: the user was running a meeting and getting fragmented chunks they couldn&#39;t reasonably review. Per-chunk markdown was the wrong granularity for that workflow. This sprint delivers the right granularity (per-session HTML, opens in any browser) and the right rotation knob (<code>--silence 0</code> for environments where sox is misbehaving). Took ~45 minutes total; both changes are small, well-tested, and roll back trivially (per-chunk .md still works exactly as before; <code>--silence N&gt;0</code> is still the default)</li>
+</ul>
 
 </body>
 </html>

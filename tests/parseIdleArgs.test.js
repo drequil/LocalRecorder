@@ -38,9 +38,13 @@ describe('parseIdleArgs', () => {
     expect(parseIdleArgs(['./r', '--threshold', 'abc']).error).toMatch(/0\.\.100/);
   });
 
-  test('parses --silence as a positive number', () => {
+  test('parses --silence as a non-negative number (0 disables sox silence detection)', () => {
     expect(parseIdleArgs(['./r', '--silence', '2.5']).idleSilenceSeconds).toBe(2.5);
-    expect(parseIdleArgs(['./r', '--silence', '0']).error).toMatch(/positive number/);
+    // 0 is the explicit "disable silence detector" signal -- chunks rotate
+    // only on --max-chunk-seconds.
+    expect(parseIdleArgs(['./r', '--silence', '0']).idleSilenceSeconds).toBe(0);
+    expect(parseIdleArgs(['./r', '--silence', '-1']).error).toMatch(/non-negative/);
+    expect(parseIdleArgs(['./r', '--silence', 'abc']).error).toMatch(/non-negative/);
   });
 
   test('parses --device as a string', () => {

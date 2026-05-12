@@ -296,6 +296,11 @@ node src/index.js transcribe &lt;file.wav&gt; [--model &lt;path&gt;] [--json]
 <td>with <code>--transcribe</code>, every chunk</td>
 <td>Human-reviewable: H1 heading with timestamp, metadata block, links to the sibling files, transcript section. The <code>.md</code> is the single artifact a user opens per chunk -- it always lands, whether transcription succeeded, failed, or was skipped by the peak gate. Failure reason and skip reason both appear inline in the transcript section as italicised stubs.</td>
 </tr>
+<tr>
+<td><code>transcript.html</code> (per session, not per chunk)</td>
+<td>with <code>--transcribe</code></td>
+<td>Single self-contained HTML document at the session-dir root that grows live as chunks complete. Open it in any browser; it&#39;s the meeting-level artifact. Each chunk gets a section with the HH:MM:SS, duration/peak/bytes summary, and the transcript text. Skipped + failed chunks also appear with explicit stubs so there&#39;s never a silent gap.</td>
+</tr>
 </tbody></table>
 <h3>Example — leave it running for an hour</h3>
 <pre><code class="language-bash">node src/index.js idle --name meeting --duration 3600 --threshold 0.5 --silence 20

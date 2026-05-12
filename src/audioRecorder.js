@@ -8,6 +8,7 @@ const { buildSidecar, writeSidecar, sidecarPathFor } = require('./chunkSidecar')
 const { transcribeFile, DEFAULT_MODEL_PATH } = require('./transcribe');
 const { createTranscribeQueue } = require('./transcribeQueue');
 const { formatChunkMarkdown, markdownPathFor } = require('./chunkMarkdown');
+const { appendChunkToSessionHtml } = require('./sessionTranscript');
 
 const WAV_HEADER_BYTES = 44; // canonical 44-byte preamble for our format
 
@@ -157,13 +158,43 @@ async function runWithMarkdown(job, { transcribeFn, fsImpl = fs, maxRetries = 1,
   } catch (mdErr) {
     console.warn(`[markdown failed] ${path.relative(process.cwd(), job.wav)}: ${mdErr.message}`);
   }
+  // Session-level HTML transcript: a single file per session that grows live.
+  // Best-effort like the .md write -- failures here are logged but never
+  // mask the transcription outcome.
+  let htmlPath = null;
+  try {
+    const sidecarOnDisk = readSidecarBestEffort(job.wav, fsImpl);
+    htmlPath = appendChunkToSessionHtml({
+      wav: job.wav,
+      sidecar: sidecarOnDisk,
+      transcript: transcribeResult ? transcribeResult.text : null,
+      transcribeStatus: transcribeError ? 'failed' : 'ok',
+      transcribeError: transcribeError ? transcribeError.message : null,
+      fsImpl,
+    });
+  } catch (htmlErr) {
+    console.warn(`[session html failed] ${path.relative(process.cwd(), job.wav)}: ${htmlErr.message}`);
+  }
   if (transcribeError) {
-    // Decorate the thrown error with the .md path so onFailure can surface
-    // that the user has a stub to look at.
+    // Decorate the thrown error with the .md / .html paths so onFailure can
+    // surface that the user has stubs to look at.
     transcribeError.mdPath = mdPath;
+    transcribeError.htmlPath = htmlPath;
     throw transcribeError;
   }
-  return { ...transcribeResult, mdPath };
+  return { ...transcribeResult, mdPath, htmlPath };
+}
+
+// Shared helper: read the sidecar JSON for a wav, or return a minimal duck if
+// the file is missing. Used by both writeChunkMarkdownSibling and the session
+// HTML appender so they agree on the fallback shape.
+function readSidecarBestEffort(wav, fsImpl = fs) {
+  try {
+    const text = fsImpl.readFileSync(sidecarPathFor(wav), 'utf8');
+    return JSON.parse(text);
+  } catch (_) {
+    return { wav: path.basename(wav) };
+  }
 }
 
 class AudioRecorder {
@@ -189,6 +220,11 @@ class AudioRecorder {
     this.idleSilenceSeconds = Number.isFinite(idleSilenceSeconds)
       ? String(idleSilenceSeconds)
       : '1.0';
+    // `--silence 0` is the explicit "disable sox silence detector" signal --
+    // chunks rotate only on --max-chunk-seconds. Useful when the detector is
+    // unreliable in the user's audio environment (e.g. fluctuating noise floor
+    // around the threshold causing premature rotation).
+    this.idleSilenceDisabled = Number.isFinite(idleSilenceSeconds) && idleSilenceSeconds === 0;
     // 0 / null / undefined => no upper bound on chunk length.
     this.maxChunkSeconds = Number.isFinite(maxChunkSeconds) && maxChunkSeconds > 0
       ? maxChunkSeconds
@@ -231,9 +267,11 @@ class AudioRecorder {
       });
       const logger = transcribeLogger || {
         onSuccess: (job, result) => {
-          // Prefer announcing the .md (T-4's user-facing artifact); fall back
-          // to the .txt if the md write failed.
-          const announcePath = (result && result.mdPath) || (result && result.txtPath);
+          // Announce the session HTML (single file the user follows live)
+          // when available; fall back to the per-chunk .md, then the .txt.
+          const announcePath = (result && result.htmlPath)
+            || (result && result.mdPath)
+            || (result && result.txtPath);
           if (announcePath) {
             const rel = path.relative(process.cwd(), announcePath);
             console.log(`[transcribed] ${rel}`);
@@ -348,6 +386,18 @@ class AudioRecorder {
           } catch (mdErr) {
             console.warn(`[markdown failed] ${path.relative(process.cwd(), filePath)}: ${mdErr.message}`);
           }
+          // Skipped chunks also flow into the session HTML so the reader
+          // sees an explicit "[skipped] ..." entry rather than a silent gap.
+          try {
+            appendChunkToSessionHtml({
+              wav: filePath,
+              sidecar: sidecarPayload != null ? sidecarPayload : { wav: path.basename(filePath) },
+              transcribeStatus: 'skipped',
+              transcribeError: reason,
+            });
+          } catch (htmlErr) {
+            console.warn(`[session html failed] ${path.relative(process.cwd(), filePath)}: ${htmlErr.message}`);
+          }
           console.log(
             `[transcribe skipped] ${path.relative(process.cwd(), filePath)} (${reason})`,
           );
@@ -457,7 +507,10 @@ class AudioRecorder {
       this.recording = recorder.record({
         ...this.options,
         audioType: 'wav',
-        endOnSilence: true,
+        // When silence detection is disabled, sox records continuously and
+        // we rely entirely on --max-chunk-seconds to rotate. recorderPatch
+        // omits the silence args from sox when endOnSilence is false.
+        endOnSilence: !this.idleSilenceDisabled,
         threshold: this.idleThreshold,
         silence: this.idleSilenceSeconds,
       });

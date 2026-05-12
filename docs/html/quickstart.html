@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LocalRecorder — Quickstart</title>
+  <style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    max-width: 760px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    line-height: 1.55;
+  }
+  h1, h2, h3, h4 { line-height: 1.25; }
+  h1 { border-bottom: 1px solid #8884; padding-bottom: 0.3rem; }
+  h2 { border-bottom: 1px solid #8882; padding-bottom: 0.2rem; margin-top: 2rem; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+  pre code { display: block; padding: 0.75rem; overflow-x: auto; background: #8881; border-radius: 4px; }
+  :not(pre) > code { background: #8881; padding: 0.1rem 0.3rem; border-radius: 3px; }
+  table { border-collapse: collapse; }
+  th, td { border: 1px solid #8884; padding: 0.4rem 0.6rem; }
+  blockquote { border-left: 3px solid #8884; padding-left: 0.75rem; color: #888; }
+  hr { border: none; border-top: 1px solid #8884; }
+  .meta { color: #888; font-size: 0.85em; margin-bottom: 1.5rem; }
+  .meta a { color: inherit; }
+</style>
+</head>
+<body>
+  <p class="meta">Generated from <code>docs/quickstart.md</code> &middot; <a href="../../docs/quickstart.md">view source</a></p>
+<h1>LocalRecorder — Quickstart</h1>
+<p>All commands assume your current directory is the repo root. Output always
+lands under <code>./recordings/&lt;session&gt;/</code> unless you override it with <code>--root</code>
+or a positional path, so nothing pollutes the repo root.</p>
+<h2>Quick reference</h2>
+<table>
+<thead>
+<tr>
+<th>What you want</th>
+<th>Command</th>
+<th>Output</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>See if the mic works</strong> (no files written)</td>
+<td><code>node src/index.js listen</code></td>
+<td>nothing on disk — live peak meter only</td>
+</tr>
+<tr>
+<td><strong>Quick test record</strong> (one WAV, 5 s)</td>
+<td><code>node src/index.js record --duration 5</code></td>
+<td><code>./recordings/2026-05-12/recording-&lt;ts&gt;.wav</code></td>
+</tr>
+<tr>
+<td><strong>Named single recording</strong></td>
+<td><code>node src/index.js record --name testcall --duration 30</code></td>
+<td><code>./recordings/testcall/testcall-&lt;ts&gt;.wav</code></td>
+</tr>
+<tr>
+<td><strong>Chunked capture, no transcription</strong> (5 minutes)</td>
+<td><code>node src/index.js idle --name meeting --duration 300</code></td>
+<td><code>./recordings/meeting/chunk-&lt;ts&gt;.wav</code> + <code>.json</code> per silence-rotated chunk</td>
+</tr>
+<tr>
+<td><strong>Phase 4 demo: capture + auto-transcribe</strong></td>
+<td><code>node src/index.js idle --name demo --duration 60 --threshold 0.5 --silence 2 --transcribe</code></td>
+<td><code>./recordings/demo/chunk-&lt;ts&gt;.{wav,json,txt,md}</code> quartet per chunk</td>
+</tr>
+<tr>
+<td><strong>Long meeting, leave it running</strong> (1 hour)</td>
+<td><code>node src/index.js idle --name standup --duration 3600 --threshold 0.5 --silence 20 --transcribe</code></td>
+<td><code>./recordings/standup/</code> filling up live</td>
+</tr>
+<tr>
+<td><strong>Push output OUT of the repo entirely</strong></td>
+<td><code>node src/index.js idle --root D:\recordings --name meeting --transcribe --duration 60</code></td>
+<td><code>D:\recordings\meeting\chunk-&lt;ts&gt;.{wav,json,txt,md}</code></td>
+</tr>
+<tr>
+<td><strong>Pick a specific output dir</strong> (no auto-layout)</td>
+<td><code>node src/index.js idle &quot;D:\meetings\client-call&quot; --transcribe --duration 60</code></td>
+<td><code>D:\meetings\client-call\chunk-&lt;ts&gt;.{wav,json,txt,md}</code> (verbatim)</td>
+</tr>
+<tr>
+<td><strong>Higher-accuracy transcription</strong></td>
+<td><code>node src/index.js idle --name interview --transcribe --model models\ggml-small.en.bin --duration 600</code></td>
+<td><code>./recordings/interview/...</code> with <code>small.en</code> quality</td>
+</tr>
+<tr>
+<td><strong>Transcribe one existing WAV</strong></td>
+<td><code>node src/index.js transcribe .\recordings\meeting\chunk-20260512-162301-489.wav</code></td>
+<td>prints transcript to stdout; writes <code>&lt;basename&gt;.txt</code> next to the wav</td>
+</tr>
+<tr>
+<td><strong>Same, as JSON</strong></td>
+<td><code>node src/index.js transcribe .\path\to.wav --json</code></td>
+<td><code>{ text, model, wav, durationMs, ... }</code> on stdout</td>
+</tr>
+<tr>
+<td><strong>Skip dead-air chunks</strong> (default on; shows the knob)</td>
+<td><code>node src/index.js idle --name talk --transcribe --transcribe-min-peak 0.01 --duration 60</code></td>
+<td>Dead-air chunks get a <code>.md</code> stub; no <code>.txt</code>, no whisper CPU</td>
+</tr>
+<tr>
+<td><strong>Transcribe every chunk regardless of loudness</strong></td>
+<td><code>node src/index.js idle --name talk --transcribe --transcribe-min-peak 0 --duration 60</code></td>
+<td>Gate disabled</td>
+</tr>
+<tr>
+<td><strong>Tighter backlog warning</strong> (warn if 2+ chunks pile up)</td>
+<td><code>node src/index.js idle --name talk --transcribe --transcribe-queue-max 2 --duration 60</code></td>
+<td><code>[transcribe backlog]</code> warns at depth &gt; 2</td>
+</tr>
+</tbody></table>
+<h2>Where things land — three layout modes</h2>
+<table>
+<thead>
+<tr>
+<th>You pass…</th>
+<th>Output dir</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>nothing (just <code>idle</code> / <code>record</code>)</td>
+<td><code>./recordings/&lt;YYYY-MM-DD&gt;/</code> (today&#39;s date, single shared folder)</td>
+</tr>
+<tr>
+<td><code>--name &lt;label&gt;</code></td>
+<td><code>./recordings/&lt;label&gt;/</code> (auto-slugified — spaces and punctuation become <code>-</code>)</td>
+</tr>
+<tr>
+<td><code>--root &lt;dir&gt; [--name &lt;label&gt;]</code></td>
+<td><code>&lt;dir&gt;/&lt;label-or-date&gt;/</code></td>
+</tr>
+<tr>
+<td>positional <code>&lt;dir&gt;</code> to <code>idle</code></td>
+<td><code>&lt;dir&gt;/</code> verbatim — bypasses the auto-layout entirely</td>
+</tr>
+<tr>
+<td>positional <code>&lt;file&gt;</code> to <code>record</code></td>
+<td><code>&lt;file&gt;</code> verbatim — bypasses the auto-layout entirely</td>
+</tr>
+</tbody></table>
+<h2>The two flags worth memorizing</h2>
+<ul>
+<li><code>--name &lt;label&gt;</code> — gives the session a meaningful folder name. Same name
+on different days appends to the same folder; the timestamped filenames
+keep them collision-free.</li>
+<li><code>--transcribe</code> — turns on the Phase 4 pipeline. Adds the <code>.txt</code> and
+<code>.md</code> siblings for every loud-enough chunk. Costs CPU; needs
+<code>whisper-cli</code> on <code>PATH</code> and a model under <code>./models/ggml-base.en.bin</code>
+(or wherever you point <code>--model</code>).</li>
+</ul>
+<h2>Per-chunk artifacts (with <code>--transcribe</code>)</h2>
+<p>For each idle chunk you get up to four files:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Always</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>&lt;basename&gt;.wav</code></td>
+<td>yes</td>
+<td>The captured audio (16 kHz mono 16-bit signed PCM).</td>
+</tr>
+<tr>
+<td><code>&lt;basename&gt;.json</code></td>
+<td>yes</td>
+<td>Sidecar metadata — <code>{ version, wav, start, end, durationMs, audio, peak, peakDb, bytes }</code>.</td>
+</tr>
+<tr>
+<td><code>&lt;basename&gt;.txt</code></td>
+<td>only when the chunk passes the peak gate</td>
+<td>Verbatim whisper.cpp transcript. Empty file when whisper returned no speech.</td>
+</tr>
+<tr>
+<td><code>&lt;basename&gt;.md</code></td>
+<td>yes, every chunk</td>
+<td>Per-chunk markdown: H1 with timestamp, metadata block, file links, transcript section. On failure or peak-gate skip the <code>.md</code> still lands with an italicised stub explaining why.</td>
+</tr>
+<tr>
+<td><code>transcript.html</code></td>
+<td>yes, one per session</td>
+<td><strong>The meeting-level artifact.</strong> A single self-contained HTML document at the session-dir root that grows live as chunks complete. Open it in any browser; you don&#39;t need any of the per-chunk files to read it.</td>
+</tr>
+</tbody></table>
+<h2>Disable the silence detector (recommended for long meetings)</h2>
+<p>In some audio environments sox&#39;s silence detector misfires (room noise floor fluctuates around the threshold), rotating chunks every few seconds. Pass <code>--silence 0</code> to bypass it entirely; chunks then rotate <strong>only</strong> on <code>--max-chunk-seconds</code>. For a meeting you usually want 5-minute chunks:</p>
+<pre><code class="language-cmd">node D:\repos\LocalRecorder\src\index.js idle --root D:\recordings --name MeetingTest --transcribe --model D:\repos\LocalRecorder\models\ggml-base.en.bin --silence 0 --max-chunk-seconds 300
+</code></pre>
+<h2>Worked example — keep your repo tidy</h2>
+<p>Route all sessions to an external directory so nothing ever lands in the
+repo working tree:</p>
+<pre><code class="language-powershell"># One-time: set an env var so you don&#39;t have to type --root every time.
+$env:LR_ROOT = &quot;D:\recordings&quot;
+
+# Now any session goes under D:\recordings\&lt;name&gt;\
+node src/index.js idle --root $env:LR_ROOT --name $(Get-Date -Format yyyyMMdd-HHmm) `
+                      --threshold 0.5 --silence 5 --transcribe --duration 3600
+</code></pre>
+<p>That session lands under <code>D:\recordings\20260512-1700\</code> as <code>chunk-*.wav</code> +
+<code>.json</code> + <code>.txt</code> + <code>.md</code> — and <code>D:\repos\LocalRecorder</code> stays clean.</p>
+<h2>When something goes wrong</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>sox: command not found</code></td>
+<td><code>sox</code> not on PATH</td>
+<td>Install Chocolatey package <code>sox</code>, or download a Windows build and add to <code>PATH</code></td>
+</tr>
+<tr>
+<td><code>transcribe: no whisper.cpp CLI found on PATH</code></td>
+<td><code>whisper-cli</code> not on PATH</td>
+<td><code>npm run transcribe:check</code> for guided install steps</td>
+</tr>
+<tr>
+<td><code>transcribe: model file not found</code></td>
+<td>Missing <code>./models/ggml-base.en.bin</code></td>
+<td>Download from <code>https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin</code> to <code>./models/</code>, or pass <code>--model &lt;path&gt;</code></td>
+</tr>
+<tr>
+<td>All chunks getting <code>_Skipped: peak ... below ..._</code></td>
+<td>Mic gain too low / silent room</td>
+<td>Either raise mic gain in OS, or set <code>--transcribe-min-peak 0</code> to disable the gate</td>
+</tr>
+<tr>
+<td><code>[transcribe backlog] queue depth ...</code> keeps firing</td>
+<td>Capture is outrunning transcription</td>
+<td>Raise <code>--silence</code> (longer pauses before rotating), or lower <code>--max-chunk-seconds</code>, or switch to a smaller model (<code>base.en</code> → <code>tiny.en</code>)</td>
+</tr>
+<tr>
+<td>Transcripts look like gibberish</td>
+<td>Wrong model for your accent / language</td>
+<td>Try <code>--model models/ggml-small.en.bin</code> or <code>ggml-medium.en.bin</code>; English models will not work for other languages — drop the <code>.en</code> for the multilingual variants</td>
+</tr>
+</tbody></table>
+<h2>Model trade-offs (when <code>base.en</code> isn&#39;t enough)</h2>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Size on disk</th>
+<th>Typical CPU speed</th>
+<th>Accuracy (English)</th>
+<th>Recommended for</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>ggml-tiny.en.bin</code></td>
+<td>~75 MB</td>
+<td>~5–10× faster than realtime</td>
+<td>Rough; misses unusual words</td>
+<td>Quick keyword search, live captioning of a single clear speaker</td>
+</tr>
+<tr>
+<td><code>ggml-base.en.bin</code></td>
+<td>~141 MB</td>
+<td>~2–4× faster than realtime</td>
+<td>Decent for clear speech in a quiet room</td>
+<td><strong>Default</strong>; solo dictation, meeting notes</td>
+</tr>
+<tr>
+<td><code>ggml-small.en.bin</code></td>
+<td>~466 MB</td>
+<td>~realtime to 1.5×</td>
+<td>Good; handles light accents and multi-speaker</td>
+<td>Routine meetings with 2–5 people</td>
+</tr>
+<tr>
+<td><code>ggml-medium.en.bin</code></td>
+<td>~1.5 GB</td>
+<td>~0.5× realtime</td>
+<td>Very good; handles accents and jargon</td>
+<td>Important meetings, technical content</td>
+</tr>
+<tr>
+<td><code>ggml-large-v3.bin</code></td>
+<td>~3.0 GB</td>
+<td>~0.2–0.3× realtime</td>
+<td>Best available locally</td>
+<td>Production transcription where accuracy matters more than turnaround</td>
+</tr>
+</tbody></table>
+<p>Switch models per session with <code>--model models/ggml-medium.en.bin</code>. Mind
+the disk / memory cost: medium and large are big enough to noticeably
+impact a small laptop SSD if you keep multiple copies around.</p>
+
+</body>
+</html>

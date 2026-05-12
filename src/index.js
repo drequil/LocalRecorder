@@ -94,7 +94,10 @@ const RECORD_FLAGS = {
 
 const IDLE_FLAGS = {
   '--threshold': { type: 'percent', as: 'idleThreshold' },
-  '--silence': { type: 'positiveNumber', as: 'idleSilenceSeconds' },
+  // --silence 0 explicitly disables sox's silence detector so chunks only
+  // rotate on --max-chunk-seconds. Useful when the silence detector is
+  // misbehaving in a noisy environment.
+  '--silence': { type: 'nonNegativeNumber', as: 'idleSilenceSeconds' },
   '--device': { type: 'string', as: 'device' },
   '--max-chunk-seconds': { type: 'positiveNumber', as: 'maxChunkSeconds' },
   '--duration': { type: 'positiveNumber', as: 'durationSeconds' },
@@ -145,7 +148,7 @@ function printHelp() {
   console.log('Flag notes:');
   console.log('  --duration N            Stop after N seconds (record + idle, positive number)');
   console.log('  --threshold P           Silence threshold percent (0..100; default 0.5)');
-  console.log('  --silence N             Silence duration before rotation in seconds (positive; default 1.0)');
+  console.log('  --silence N             Silence duration before rotation, seconds (default 1.0; 0 disables sox silence detector -> rotate only on --max-chunk-seconds)');
   console.log('  --device <id>           Audio input device id (Windows waveaudio index; default 0)');
   console.log('  --max-chunk-seconds N   Force-rotate a chunk after N seconds even without silence');
   console.log('  --transcribe            Auto-transcribe each idle chunk; writes <basename>.txt + .md next to .wav');

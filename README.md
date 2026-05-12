@@ -185,6 +185,7 @@ In `idle` mode each chunk produces:
 | `<basename>.json` | yes | Sidecar metadata (schema v1): `{ version, wav, start, end, durationMs, audio, peak, peakDb, bytes }`. Empty placeholder chunks (sox waiting for audio that never arrived) are auto-deleted along with their sidecar slot. |
 | `<basename>.txt` | with `--transcribe`, when the chunk is loud enough to transcribe | Verbatim whisper.cpp transcript. Empty file if whisper.cpp returned no speech but the chunk passed the peak gate. Absent entirely for chunks the peak gate skipped (see `<basename>.md`). |
 | `<basename>.md` | with `--transcribe`, every chunk | Human-reviewable: H1 heading with timestamp, metadata block, links to the sibling files, transcript section. The `.md` is the single artifact a user opens per chunk -- it always lands, whether transcription succeeded, failed, or was skipped by the peak gate. Failure reason and skip reason both appear inline in the transcript section as italicised stubs. |
+| `transcript.html` (per session, not per chunk) | with `--transcribe` | Single self-contained HTML document at the session-dir root that grows live as chunks complete. Open it in any browser; it's the meeting-level artifact. Each chunk gets a section with the HH:MM:SS, duration/peak/bytes summary, and the transcript text. Skipped + failed chunks also appear with explicit stubs so there's never a silent gap. |
 
 ### Example — leave it running for an hour
 
