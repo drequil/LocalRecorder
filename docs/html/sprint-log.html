@@ -192,6 +192,39 @@
 </li>
 <li>Why: before MS-3 streams bytes off the default input, having a way to confirm &quot;yes sox sees a mic, and yes it&#39;s the one I expect&quot; makes hardware-level problems debuggable in seconds instead of by trial and error</li>
 </ul>
+<h2>Sprint 13 (MS-3): Live Level Meter (Completed)</h2>
+<ul>
+<li>First end-to-end pull of real audio bytes off the mic. Confirms the entire capture pipeline on this Windows box and unblocks all subsequent recording sprints</li>
+<li>Added <code>AudioRecorder.listen(handler)</code>: starts a capture session that streams PCM to a handler with no file output. Integrates with the existing lifecycle flags (<code>recording</code>, <code>idle</code>, <code>listening</code>); <code>start()</code>, <code>idleListen()</code>, and <code>listen()</code> all reject overlap; <code>stop()</code> works from any of the three modes</li>
+<li>Added <code>src/audioLevels.js</code> (pure): <code>peak16LE(buffer)</code> returns a normalized 0..1 peak across int16-LE samples; <code>toDb(normPeak)</code> returns dBFS with a <code>SILENCE_DB = -120</code> floor; <code>renderBar(level, { width })</code> returns a bracketed <code>[####----]</code> bar with default <code>BAR_WIDTH = 40</code>. Numbers chosen so <code>(-32768).abs() / 32768 == 1.0</code> exactly</li>
+<li>Added <code>node src/index.js listen</code> CLI subcommand: spawns a listen session, recomputes peak per chunk, and prints a live <code>\r</code>-updated bar + peak + dBFS reading. Ctrl+C calls <code>recorder.stop()</code> and exits 0</li>
+<li>Added <code>tools/smoke-listen.js</code>: a non-interactive sanity check that captures for N ms and prints a single JSON line <code>{ chunks, totalBytes, maxPeak, maxPeakDb }</code>. Useful in CI-style validation when TTY \r rendering is not observable</li>
+<li>Discovered and fixed a Windows-specific blocker: <code>node-record-lpcm16</code> hardcodes <code>sox --default-device</code>, which fails on Windows 14.4.2 with <code>sox: Sorry, there is no default audio device configured</code>. Added <code>src/recorderPatch.js</code>: a Windows-only override that replaces the bundled sox recorder via <code>require.cache</code> BEFORE <code>node-record-lpcm16</code> is loaded. The override passes <code>-t waveaudio &lt;device&gt;</code> (default <code>0</code>) and respects <code>options.device</code>, <code>options.audioType</code>, and the existing <code>endOnSilence</code> silence-effect args</li>
+<li><code>listen()</code> requests <code>audioType: &#39;raw&#39;</code> from the recorder so the meter does not interpret RIFF header bytes as audio samples in the first chunk</li>
+<li>Added a defensive <code>stream.on(&#39;error&#39;, ...)</code> handler inside <code>listen()</code> that stays quiet when the error fires as a side effect of a deliberate <code>stop()</code> (detected by <code>this.recording === null</code> at error time). Without it, every smoke run printed a misleading <code>Listen stream error: sox has exited with error code null.</code> even on success</li>
+<li>Files added: <code>src/audioLevels.js</code>, <code>src/recorderPatch.js</code>, <code>tests/audioLevels.test.js</code> (user-authored), <code>tests/recorderPatch.test.js</code>, <code>tools/smoke-listen.js</code> (user-authored)</li>
+<li>Files modified: <code>src/audioRecorder.js</code>, <code>src/index.js</code>, <code>tests/audioRecorder.test.js</code>, <code>docs/sprint-log.md</code>, regenerated HTML mirrors</li>
+<li>Validation:<ul>
+<li><code>npm test</code> — 39/39 passing across 4 suites (added 4 patch tests, plus the user&#39;s level/listen tests)</li>
+<li>Three consecutive <code>node tools/smoke-listen.js</code> runs on this machine produced real audio:<ul>
+<li>2.5 s: 9 chunks / 73,728 bytes / peak 0.078 / -22.2 dBFS</li>
+<li>1.8 s: 5 chunks / 40,960 bytes / peak 0.027 / -31.4 dBFS</li>
+<li>1.5 s: 4 chunks / 32,768 bytes / peak 0.100 / -20.0 dBFS</li>
+</ul>
+</li>
+<li>No leftover <code>sox.exe</code> processes after any run (<code>Get-Process sox</code> returns nothing)</li>
+<li>Final smoke run no longer prints the spurious error line</li>
+</ul>
+</li>
+<li>Known limitations:<ul>
+<li><code>start()</code> and <code>idleListen()</code> do NOT yet have analogous <code>stream.on(&#39;error&#39;, ...)</code> handlers. They still inherit the same unhandled-error crash class that listen() used to have. MS-4 will exercise <code>start()</code> against real hardware and must add matching error handlers before doing so</li>
+<li>The Windows device is hardcoded to <code>0</code> in the patch (first non-default input device, per MS-2 enumeration on this machine). A different machine may need a different index. Plumbing a <code>--device &lt;id&gt;</code> CLI flag through to the AudioRecorder is deferred (not blocking on this machine)</li>
+<li>The patch installs itself via <code>require.cache</code> mutation. If a future tool loads <code>node-record-lpcm16</code> BEFORE <code>src/audioRecorder.js</code>, the patch will be skipped silently. Tests are unaffected because they mock the library</li>
+<li>SoX 14.4.2 reports the mic at 48000 Hz native; sox auto-resamples to the requested 16000 Hz. CPU cost is negligible at these rates</li>
+</ul>
+</li>
+<li>Why: this is the first sprint that proves audio actually flows. Everything after this assumes the pipeline works -- finding the Windows <code>--default-device</code> mismatch now, in a sprint dedicated to &quot;prove the input works&quot;, saves the next 5 mini-sprints from re-discovering the same bug</li>
+</ul>
 
 </body>
 </html>

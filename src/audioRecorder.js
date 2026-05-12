@@ -1,3 +1,4 @@
+require('./recorderPatch'); // must come before node-record-lpcm16 is loaded
 const recorder = require('node-record-lpcm16');
 const fs = require('fs');
 
@@ -11,10 +12,11 @@ class AudioRecorder {
     this.recording = null;
     this.fileStream = null;
     this.idle = false;
+    this.listening = false;
   }
 
   start(outputPath) {
-    if (this.recording || this.idle) {
+    if (this.recording || this.idle || this.listening) {
       throw new Error('Recording already in progress');
     }
 
@@ -25,8 +27,30 @@ class AudioRecorder {
     console.log('Recording started to', outputPath);
   }
 
+  listen(handler) {
+    if (this.recording || this.idle || this.listening) {
+      throw new Error('Recording already in progress');
+    }
+    if (typeof handler !== 'function') {
+      throw new TypeError('listen(handler): handler must be a function');
+    }
+    this.listening = true;
+    this.recording = recorder.record({ ...this.options, audioType: 'raw' });
+    const stream = this.recording.stream();
+    stream.on('data', handler);
+    stream.on('error', (err) => {
+      // After stop() runs, this.recording is null -- treat that as an
+      // intentional shutdown and stay quiet; sox's exit on kill is not news.
+      if (!this.recording) return;
+      console.error('Listen stream error:', err);
+      this.listening = false;
+      this.recording = null;
+    });
+    console.log('Listening (no file written)');
+  }
+
   idleListen(outputPath) {
-    if (this.recording || this.idle) {
+    if (this.recording || this.idle || this.listening) {
       throw new Error('Recording already in progress');
     }
     this.idle = true;
@@ -60,10 +84,11 @@ class AudioRecorder {
   }
 
   stop() {
-    if (!this.recording && !this.idle) {
+    if (!this.recording && !this.idle && !this.listening) {
       throw new Error('No recording in progress');
     }
     this.idle = false;
+    this.listening = false;
     if (this.recording) {
       if (typeof this.recording.stop === 'function') {
         this.recording.stop();

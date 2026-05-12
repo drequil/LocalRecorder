@@ -1,15 +1,53 @@
 const path = require('path');
 const AudioRecorder = require('./audioRecorder');
 const { enumerateDevices } = require('./audioDevices');
+const { peak16LE, toDb, renderBar } = require('./audioLevels');
 
 function printHelp() {
   console.log('LocalRecorder v0.1.0');
   console.log('');
   console.log('Usage:');
   console.log('  node src/index.js devices               List audio input devices visible to sox');
+  console.log('  node src/index.js listen                Live peak-level meter (no file written)');
   console.log('  node src/index.js record <output.wav>   Start a recording (Ctrl+C to stop)');
   console.log('  node src/index.js idle <output.wav>     Idle listening with silence detection');
   console.log('  node src/index.js help                  Show this help');
+}
+
+function runListen() {
+  const recorder = new AudioRecorder();
+  let windowPeak = 0;
+  let lastRender = 0;
+
+  try {
+    recorder.listen((chunk) => {
+      const p = peak16LE(chunk);
+      if (p > windowPeak) windowPeak = p;
+      const now = Date.now();
+      if (now - lastRender < 100) return;
+      const db = toDb(windowPeak);
+      const bar = renderBar(windowPeak);
+      const dbLabel = `${db.toFixed(1).padStart(6)} dBFS`;
+      process.stdout.write(`\r${bar}  ${dbLabel}  `);
+      windowPeak = 0;
+      lastRender = now;
+    });
+  } catch (err) {
+    console.error('Could not start listening:', err.message);
+    return 1;
+  }
+
+  console.log('Press Ctrl+C to stop.');
+
+  const shutdown = () => {
+    try { recorder.stop(); } catch (e) { /* not active */ }
+    process.stdout.write('\n');
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+
+  return 0;
 }
 
 async function runDevices() {
@@ -49,6 +87,10 @@ async function main(argv) {
 
   if (command === 'devices') {
     return runDevices();
+  }
+
+  if (command === 'listen') {
+    return runListen();
   }
 
   if (!['record', 'idle'].includes(command)) {
@@ -99,4 +141,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { main, printHelp, runDevices };
+module.exports = { main, printHelp, runDevices, runListen };

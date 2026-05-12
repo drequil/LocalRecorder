@@ -1,11 +1,16 @@
 jest.mock('node-record-lpcm16', () => {
   const factory = {
     record: jest.fn(() => {
+      const stream = {
+        pipe: jest.fn(),
+        on: jest.fn(),
+      };
       const recording = {
-        stream: jest.fn(() => ({ pipe: jest.fn() })),
+        stream: jest.fn(() => stream),
         stop: jest.fn(),
         on: jest.fn(),
       };
+      recording.__stream = stream;
       factory.__lastRecording = recording;
       return recording;
     }),
@@ -82,6 +87,46 @@ describe('AudioRecorder', () => {
   test('idleListen() rejects a second concurrent call', () => {
     recorder.idleListen('idle.wav');
     expect(() => recorder.idleListen('idle2.wav')).toThrow('Recording already in progress');
+  });
+
+  test('listen() attaches handler to the stream data event and writes no file', () => {
+    const handler = jest.fn();
+    expect(() => recorder.listen(handler)).not.toThrow();
+    expect(recorderLib.record).toHaveBeenCalledWith(
+      expect.objectContaining({ ...recorder.options, audioType: 'raw' }),
+    );
+    expect(fs.createWriteStream).not.toHaveBeenCalled();
+    const dataReg = recorderLib.__lastRecording.__stream.on.mock.calls.find(
+      ([event]) => event === 'data',
+    );
+    expect(dataReg).toBeDefined();
+    expect(dataReg[1]).toBe(handler);
+    expect(recorder.listening).toBe(true);
+  });
+
+  test('listen() requires a function handler', () => {
+    expect(() => recorder.listen()).toThrow(TypeError);
+    expect(() => recorder.listen('nope')).toThrow(TypeError);
+  });
+
+  test('listen() rejects when start() is already active', () => {
+    recorder.start('out.wav');
+    expect(() => recorder.listen(() => {})).toThrow('Recording already in progress');
+  });
+
+  test('start() and idleListen() reject when listening', () => {
+    recorder.listen(() => {});
+    expect(() => recorder.start('out.wav')).toThrow('Recording already in progress');
+    expect(() => recorder.idleListen('idle.wav')).toThrow('Recording already in progress');
+  });
+
+  test('stop() halts a listen session and clears the listening flag', () => {
+    recorder.listen(() => {});
+    const lastRecording = recorderLib.__lastRecording;
+    expect(() => recorder.stop()).not.toThrow();
+    expect(lastRecording.stop).toHaveBeenCalled();
+    expect(recorder.listening).toBe(false);
+    expect(recorder.recording).toBeNull();
   });
 
   test('stop() during idle gap prevents the next chunk from starting', () => {
