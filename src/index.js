@@ -10,7 +10,7 @@ function printHelp() {
   console.log('  node src/index.js devices                              List audio input devices visible to sox');
   console.log('  node src/index.js listen                               Live peak-level meter (no file written)');
   console.log('  node src/index.js record <output.wav> [--duration N]   Record (Ctrl+C, or stop after N seconds)');
-  console.log('  node src/index.js idle <output.wav>                    Idle listening with silence detection');
+  console.log('  node src/index.js idle <directory>                     Idle listening; one WAV per silence-delimited chunk');
   console.log('  node src/index.js help                                 Show this help');
 }
 
@@ -142,7 +142,8 @@ async function main(argv) {
   }
 
   const tail = args.slice(1);
-  let outputPath;
+  let recordTarget;
+  let idleDirectory;
   let durationSeconds = null;
 
   if (command === 'record') {
@@ -151,22 +152,22 @@ async function main(argv) {
       console.error(`Error: ${parsed.error}`);
       return 1;
     }
-    outputPath = path.resolve(parsed.output);
+    recordTarget = path.resolve(parsed.output);
     durationSeconds = parsed.durationSeconds;
   } else {
     const target = tail[0];
     if (!target) {
-      console.error('Error: output file path required');
+      console.error('Error: output directory required');
       return 1;
     }
-    outputPath = path.resolve(target);
+    idleDirectory = path.resolve(target);
   }
 
   const recorder = new AudioRecorder();
   if (command === 'idle') {
-    recorder.idleListen(outputPath);
+    recorder.idleListen(idleDirectory);
   } else {
-    recorder.start(outputPath);
+    recorder.start(recordTarget);
   }
 
   let durationTimer = null;

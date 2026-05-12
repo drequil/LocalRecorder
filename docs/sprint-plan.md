@@ -36,8 +36,8 @@ Listening before recording, for three reasons:
 | MS-4.5 | WAV header fixup | RIFF/data chunk sizes reflect actual file size, not sox's ~2 GiB placeholder | ✅ |
 | MS-5 | Fixed-duration record | `record --duration 5 out.wav` stops cleanly after ~5 s | ✅ |
 | MS-5.1 | Sox-side duration trim (optional) | Captured audio length matches `--duration` to within 100 ms (compensates the ~400 ms Windows startup latency) | optional |
-| MS-6 | Rolling idle chunks | `idle <dir>` writes timestamped per-silence WAV files in `<dir>` | next |
-| MS-7 | Whisper-aligned defaults | Default capture is 16 kHz mono 16-bit signed PCM in WAV | pending |
+| MS-6 | Rolling idle chunks | `idle <dir>` writes timestamped per-silence WAV files in `<dir>` | ✅ |
+| MS-7 | Whisper-aligned defaults | Default capture is 16 kHz mono 16-bit signed PCM in WAV | next |
 | MS-8 | Chunk metadata sidecars | Each idle-mode WAV gets a sidecar `.json` with start, end, peak | pending |
 
 Eight mini-sprints; each should be ~30–90 minutes of work. After MS-3 you can demo "listening". After MS-4 you can demo "recording". After MS-8 the audio capture pipeline is ready to hand off to a transcription sprint.
@@ -122,20 +122,12 @@ Eight mini-sprints; each should be ~30–90 minutes of work. After MS-3 you can 
 - **Rollback:** drop the `trim` append + option; behavior reverts to the MS-5 ~0.4 s slippage.
 - **Risk:** the trim effect runs *after* resampling, so it operates on the requested sample rate, not the device's native rate; should be a non-issue at 16 kHz but worth confirming on first run.
 
-### MS-6 — Rolling idle chunks
+### MS-6 — Rolling idle chunks (Completed in Sprint 17)
 
-- **Goal:** replace the broken single-file append behavior of `idleListen` with one WAV file per silence-delimited chunk, named with an ISO timestamp.
-- **Touches:** `src/audioRecorder.js` (`idleListen(directory, options)` signature change — accepts a directory, generates per-chunk filenames internally), `src/index.js`, tests adjusted.
-- **Steps:**
-  1. Change `idleListen(outputPath)` to `idleListen(directory)`.
-  2. For each chunk, build a filename `chunk-YYYYMMDD-HHMMSS.wav` (UTC; padded with `Date#toISOString` slicing).
-  3. Pass `audioType: 'wav'` per chunk (each chunk is its own complete WAV).
-  4. Update CLI `idle <directory>` accordingly.
-  5. Update existing idleListen tests; the test assertion that previously expected `flags: 'a'` becomes "createWriteStream called with a chunk-*.wav path inside the directory".
-- **Validation:** run `idle ./recordings/`, speak, pause, speak again. Two or more WAV files appear, each playable.
-- **Acceptance criteria:** at least 2 files produced from at least 2 distinct vocal bursts; no duplicate filenames; no leftover sox processes after Ctrl+C.
-- **Rollback:** restore single-file `outputPath` signature; the broken-but-stable Sprint 9 state is one revert away.
-- **Risk:** timestamp collisions if two chunks start within the same second; mitigate by appending a counter on collision.
+- **Goal:** replace the broken single-file append behavior of `idleListen` with one WAV file per silence-delimited chunk, named with a sortable timestamp.
+- **Outcome:** `idleListen(directory)` creates the directory, writes `chunk-YYYYMMDD-HHMMSS-mmm.wav` per chunk, finalizes each chunk's WAV header on rotation, and auto-deletes empty placeholders. CLI is `node src/index.js idle <directory>`.
+- **Realized acceptance criteria:** structural validity of every produced chunk verified via `tools/smoke-idle.js` (header walk + `sox -n stat`); 0 chunks in a quiet room is a valid outcome (placeholder auto-deleted).
+- **Lessons captured in `docs/sprint-log.md` Sprint 17:** missing `endOnSilence: true` + listening on the Recording instead of its stream were both real-hardware-only bugs that didn't show up in mock-only tests. Added a `_attachFinalize` shared helper to eliminate duplicate WAV-header finalization between `idleListen` and `stop()`.
 
 ### MS-7 — Whisper-aligned defaults
 

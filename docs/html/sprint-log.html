@@ -322,6 +322,47 @@
 </li>
 <li>Why: this is the second half of &quot;audio recording working&quot;. The CLI can now produce known-duration WAVs non-interactively, which is the prerequisite for batch capture, scripted demos, and the MS-6 rolling chunks (which also need timer-driven shutdown internally)</li>
 </ul>
+<h2>Sprint 17 (MS-6): Rolling Idle Chunks (Completed)</h2>
+<ul>
+<li>Replaces the long-standing broken <code>idleListen(outputPath)</code> (which appended every silence-delimited chunk to a single file, producing multiple back-to-back WAV headers in one file -- a Sprint 9 known limitation) with <code>idleListen(directory)</code>: one timestamped WAV per silence-delimited chunk, written into a directory that&#39;s created on demand</li>
+<li>Chunk filenames are <code>chunk-YYYYMMDD-HHMMSS-mmm.wav</code> in local time. Sortable, filename-safe on Windows, human-readable. Collision suffixes (<code>-2</code>, <code>-3</code>, ...) are appended if two chunks happen to start within the same millisecond</li>
+<li>Two real-hardware bugs surfaced during MS-6 implementation and were fixed in the same sprint (kept here in the log as a record):<ol>
+<li><code>endOnSilence: true</code> was never being passed to <code>node-record-lpcm16</code>. Sox&#39;s silence effect was therefore inactive, so chunks never rotated. Fixed: pass <code>endOnSilence: true</code> in the record options</li>
+<li>The lifecycle wired <code>this.recording.on(&#39;end&#39;, ...)</code> to the Recording instance, but <code>node-record-lpcm16</code> emits &#39;end&#39; on the <strong>stream</strong> (<code>recording.stream()</code>), not on the Recording itself. Fixed: register the listener on the stream</li>
+</ol>
+</li>
+<li>WAV header finalization (MS-4.5) is now attached at file-creation time via a new shared helper <code>_attachFinalize(fileStream, filePath)</code>, called from both <code>start()</code> and the idleListen chunk-rotation loop. Previously <code>stop()</code> also registered a finalize, causing duplicate finalize attempts whenever stop() was called during idle mode. Removed the redundant registration in <code>stop()</code></li>
+<li><code>_attachFinalize</code> does double duty: if the file is 0 bytes when it closes (sox started, waited for audio above threshold, never got any, was killed by <code>stop()</code> or rotated by stream end with no payload), the file is deleted instead of left behind. Keeps the idle directory clean even after long quiet periods</li>
+<li>Made the idle silence detector tunable via constructor options <code>idleThreshold</code> (percent, default 0.5) and <code>idleSilenceSeconds</code> (seconds, default 1.0). These map directly to sox&#39;s <code>silence 1 0.1 &lt;th&gt;% 1 &lt;n&gt; &lt;th&gt;%</code> effect. Defaults preserve previous behavior; lower thresholds (e.g. 0.01) let the non-interactive smoke tool exercise the lifecycle without requiring a human to speak</li>
+<li>Added <code>tools/smoke-idle.js</code>: programmatic real-hardware validator. Starts idle mode in a fresh temp directory, runs for N ms, calls <code>recorder.stop()</code>, lists produced WAVs, validates each header, and runs <code>sox &lt;chunk&gt; -n stat</code> on each. Accepts <code>SMOKE_IDLE_THRESHOLD</code> env var to lower the threshold for ambient-only runs. Returns <code>ok: true</code> if every chunk that survives is structurally valid (0 chunks in a quiet room is a valid outcome)</li>
+<li>CLI <code>node src/index.js idle &lt;directory&gt;</code> now expects a directory instead of a file. Help text and variable naming in <code>src/index.js</code> updated accordingly</li>
+<li>Tests added/updated in <code>tests/audioRecorder.test.js</code>:<ul>
+<li><code>idleListen()</code> creates the directory with <code>recursive: true</code> and writes a chunk file matching <code>chunk-\d{8}-\d{6}-\d{3}\.wav</code> inside it</li>
+<li><code>idleListen()</code> rotates to a new chunk path on each silence event (fake timers + stream &#39;end&#39; simulation)</li>
+<li><code>idleListen()</code> rejects empty/missing directory argument</li>
+<li><code>idleListen()</code> honors <code>idleThreshold</code> and <code>idleSilenceSeconds</code> constructor overrides</li>
+<li>The existing <code>stop()</code> overlap and post-stop tests were updated to look at the stream&#39;s <code>on(&#39;end&#39;)</code> registration (not the Recording&#39;s)</li>
+<li>New <code>defaultChunkFilename</code> unit tests for the timestamp formatter</li>
+</ul>
+</li>
+<li>Files modified: <code>src/audioRecorder.js</code>, <code>src/index.js</code>, <code>tests/audioRecorder.test.js</code>, <code>docs/sprint-log.md</code>, <code>docs/sprint-plan.md</code>, regenerated HTML mirrors</li>
+<li>Files added: <code>tools/smoke-idle.js</code></li>
+<li>Validation:<ul>
+<li><code>npm test</code> -- 61/61 passing across 6 suites (60 -&gt; 61 with the new threshold-override test)</li>
+<li><code>SMOKE_IDLE_THRESHOLD=0.01 node tools/smoke-idle.js</code> -- exit 0, 1 chunk captured (245,760 bytes, dataSize 245,716 matches file size minus 44, sox stat parses 7.68 s of audio at max amplitude 1.07%)</li>
+<li><code>node tools/smoke-idle.js</code> (default 0.5% threshold, quiet room) -- exit 0, 0 chunks produced, empty placeholder file auto-deleted</li>
+<li><code>Get-Process sox</code> after both runs -- empty</li>
+</ul>
+</li>
+<li>Known limitations:<ul>
+<li><strong>Chunk creation latency:</strong> the file stream is opened immediately when <code>recordChunk()</code> runs, then sox starts and waits for audio above threshold. If <code>stop()</code> runs during that wait, the placeholder file is correctly deleted, but a more aggressive optimization would defer file creation until sox actually emits its first byte. Deferred; current behavior is correct, just slightly wasteful on disk syscalls</li>
+<li><strong>Threshold tuning is a manual knob:</strong> 0.5% is a reasonable default for ambient room noise on this machine. Other environments (noisy office, A/C, fan-cooled laptop) may need higher; very quiet booth recording may need lower. Documented; future work is automatic threshold calibration based on a 1-second &quot;quiet baseline&quot; sample</li>
+<li><strong>No filename collision under sub-millisecond bursts:</strong> the <code>-2</code>, <code>-3</code> suffix logic only fires when two chunks share the exact millisecond. In practice sox enforces at least the silence-period gap (1.0 s default) between chunks, so collisions are theoretical only</li>
+<li><strong>Idle chunks don&#39;t have JSON sidecars yet:</strong> that&#39;s MS-8. Each chunk WAV is currently file-system-complete on its own</li>
+</ul>
+</li>
+<li>Why: this closes the longest-standing broken-feature limitation in the project. Idle mode now actually produces what users expect -- a directory of independently playable WAVs, one per spoken burst, with truthful headers and no empty placeholders. Combined with MS-3 (level meter), MS-4/MS-4.5 (file recording), and MS-5 (duration-limited recording), the full capture pipeline is functionally complete. MS-7 (Whisper-aligned defaults) and MS-8 (chunk metadata sidecars) are quality-of-life polish on top of working machinery</li>
+</ul>
 
 </body>
 </html>

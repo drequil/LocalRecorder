@@ -25,6 +25,7 @@ jest.mock('fs', () => ({
     on: jest.fn(),
     write: jest.fn(),
   })),
+  mkdirSync: jest.fn(),
 }));
 
 const recorderLib = require('node-record-lpcm16');
@@ -105,17 +106,64 @@ describe('AudioRecorder', () => {
     expect(() => recorder.stop()).toThrow('No recording in progress');
   });
 
-  test('idleListen() opens an appending stream and starts a chunk', () => {
-    expect(() => recorder.idleListen('idle.wav')).not.toThrow();
-    expect(fs.createWriteStream).toHaveBeenCalledWith('idle.wav', { flags: 'a' });
+  test('idleListen() ensures the target directory exists and writes a chunk WAV inside it', () => {
+    expect(() => recorder.idleListen('./recordings')).not.toThrow();
+    expect(fs.mkdirSync).toHaveBeenCalledWith('./recordings', { recursive: true });
+
+    expect(fs.createWriteStream).toHaveBeenCalledTimes(1);
+    const writeArg = fs.createWriteStream.mock.calls[0][0];
+    expect(writeArg).toMatch(/[\\\/]chunk-\d{8}-\d{6}-\d{3}\.wav$/);
+    expect(writeArg.startsWith('recordings') || writeArg.includes('recordings')).toBe(true);
+
     expect(recorderLib.record).toHaveBeenCalled();
     const lastCall = recorderLib.record.mock.calls.at(-1)[0];
-    expect(lastCall).toMatchObject({ threshold: 0.5, silence: '1.0' });
+    expect(lastCall).toMatchObject({
+      audioType: 'wav',
+      endOnSilence: true,
+      threshold: 0.5,
+      silence: '1.0',
+    });
+  });
+
+  test('idleListen() honors idleThreshold / idleSilenceSeconds constructor overrides', () => {
+    const custom = new AudioRecorder({ idleThreshold: 0.01, idleSilenceSeconds: 2.5 });
+    custom.idleListen('./recordings');
+    const lastCall = recorderLib.record.mock.calls.at(-1)[0];
+    expect(lastCall).toMatchObject({ threshold: 0.01, silence: '2.5' });
+    expect(lastCall.idleThreshold).toBeUndefined();
+    expect(lastCall.idleSilenceSeconds).toBeUndefined();
+  });
+
+  test('idleListen() rotates to a new chunk file on each silence event', () => {
+    jest.useFakeTimers();
+    try {
+      recorder.idleListen('./recordings');
+      const firstPath = fs.createWriteStream.mock.calls[0][0];
+
+      const firstStream = recorderLib.__lastRecording.__stream;
+      const endHandler = firstStream.on.mock.calls.find(([event]) => event === 'end');
+      expect(endHandler).toBeDefined();
+      endHandler[1]();
+
+      jest.advanceTimersByTime(150);
+
+      expect(fs.createWriteStream).toHaveBeenCalledTimes(2);
+      const secondPath = fs.createWriteStream.mock.calls[1][0];
+      expect(secondPath).not.toBe(firstPath);
+      expect(secondPath).toMatch(/[\\\/]chunk-\d{8}-\d{6}-\d{3}(?:-\d+)?\.wav$/);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('idleListen() requires a non-empty directory argument', () => {
+    expect(() => recorder.idleListen()).toThrow(TypeError);
+    expect(() => recorder.idleListen('')).toThrow(TypeError);
   });
 
   test('idleListen() rejects a second concurrent call', () => {
-    recorder.idleListen('idle.wav');
-    expect(() => recorder.idleListen('idle2.wav')).toThrow('Recording already in progress');
+    recorder.idleListen('./recordings');
+    expect(() => recorder.idleListen('./recordings2')).toThrow('Recording already in progress');
   });
 
   test('listen() attaches handler to the stream data event and writes no file', () => {
@@ -146,7 +194,7 @@ describe('AudioRecorder', () => {
   test('start() and idleListen() reject when listening', () => {
     recorder.listen(() => {});
     expect(() => recorder.start('out.wav')).toThrow('Recording already in progress');
-    expect(() => recorder.idleListen('idle.wav')).toThrow('Recording already in progress');
+    expect(() => recorder.idleListen('./recordings')).toThrow('Recording already in progress');
   });
 
   test('stop() halts a listen session and clears the listening flag', () => {
@@ -161,22 +209,38 @@ describe('AudioRecorder', () => {
   test('stop() during idle gap prevents the next chunk from starting', () => {
     jest.useFakeTimers();
     try {
-      recorder.idleListen('idle.wav');
-      const onCalls = recorderLib.__lastRecording.on.mock.calls;
-      const endHandler = onCalls.find(([event]) => event === 'end');
+      recorder.idleListen('./recordings');
+      const stream = recorderLib.__lastRecording.__stream;
+      const endHandler = stream.on.mock.calls.find(([event]) => event === 'end');
       expect(endHandler).toBeDefined();
 
       recorder.stop();
 
       recorderLib.record.mockClear();
+      fs.createWriteStream.mockClear();
       endHandler[1]();
       jest.advanceTimersByTime(500);
 
       expect(recorderLib.record).not.toHaveBeenCalled();
+      expect(fs.createWriteStream).not.toHaveBeenCalled();
       expect(recorder.idle).toBe(false);
       expect(recorder.recording).toBeNull();
     } finally {
       jest.useRealTimers();
     }
+  });
+});
+
+describe('defaultChunkFilename', () => {
+  const { defaultChunkFilename } = require('../src/audioRecorder');
+
+  test('produces a sortable chunk-YYYYMMDD-HHMMSS-mmm.wav name', () => {
+    const fixed = new Date(2026, 4, 12, 7, 47, 53, 123); // local-time month is 0-based
+    expect(defaultChunkFilename(fixed)).toBe('chunk-20260512-074753-123.wav');
+  });
+
+  test('respects a suffix for collision disambiguation', () => {
+    const fixed = new Date(2026, 4, 12, 7, 47, 53, 123);
+    expect(defaultChunkFilename(fixed, '-2')).toBe('chunk-20260512-074753-123-2.wav');
   });
 });
