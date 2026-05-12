@@ -379,22 +379,35 @@
 <li><strong>Realized acceptance criteria:</strong> on this Windows machine the recorded <code>whisper-cli</code> build actually writes the <strong>legacy</strong> filename (<code>hello.wav.txt</code>), not the modern <code>&lt;basename&gt;.txt</code> — the defensive two-candidate lookup quietly handled it on the first real run. A 5-second ambient-room WAV (peak 0.032 / -29.9 dBFS) transcribed to an empty string in 2.6 s (~57% of realtime on <code>base.en</code> with the Win32 BLAS build); whisper.cpp correctly emitted no transcript for non-speech audio rather than hallucinating one. Pipeline exits 0; CLI error paths (missing binary, missing model, missing/non-WAV input, non-zero whisper exit, empty .txt output, spawn ENOENT) are all covered by the 8-describe-block <code>tests/transcribe.test.js</code> plus 11-case <code>tests/parseTranscribeArgs.test.js</code>. <strong>Not yet validated:</strong> transcript fidelity against actual spoken words — that needs a user-in-the-loop record-then-transcribe run with someone speaking into the mic. Honest deferred item, tracked at the bottom of the Sprint 23 log entry.</li>
 <li><strong>Known limitations:</strong> transcribe is a blocking spawn; a 30-second WAV ties up the CPU for ~15 s. Acceptable for T-2&#39;s single-file use case; T-3 will introduce queue + serial processing for the idle integration. The <code>version</code> field in <code>--json</code> output is <code>null</code> on the Win32 build whose <code>--help</code> banner contains no semver token (same shape as the T-1 probe output); <code>versionLabel</code> carries the raw banner line so downstream consumers have something to log.</li>
 </ul>
-<h3>T-3 — Wire transcription into idle rotation</h3>
+<h3>T-3 — Wire transcription into idle rotation (In progress; Sprint 24 ✅, Sprint 25 ⏳)</h3>
+<p>Split into two mini-sprints since the queue is a reusable primitive worth its own commit:</p>
 <ul>
-<li><strong>Goal:</strong> every chunk produced by <code>idle</code> gets auto-transcribed after its WAV header is finalised. Transcript text is stored either in the existing sidecar JSON (extending the schema to v2) or as a sibling <code>.txt</code> (parallel to the WAV).</li>
-<li><strong>Touches:</strong> <code>src/audioRecorder.js</code> (extend <code>_attachFinalize</code> to call into a new transcription hook), <code>src/transcribe.js</code> (already present from T-2; add a queue if needed), <code>src/chunkSidecar.js</code> (potential schema bump), tests.</li>
-<li><strong>Decision to make:</strong> sibling <code>.txt</code> vs sidecar extension. Lean toward <strong>sibling <code>.txt</code></strong> because: (1) keeps the schema-v1 sidecar untouched, (2) matches whisper.cpp&#39;s own <code>--output-txt</code> convention, (3) makes failure modes orthogonal — a missing <code>.txt</code> means &quot;transcription pending/failed&quot;, a complete sidecar means &quot;capture metadata is fine regardless&quot;. Justify the choice inline in the sprint log when the sprint runs.</li>
-<li><strong>Steps:</strong><ol>
+<li><p><strong>Sprint 24 (T-3.1):</strong> serial in-memory transcription queue (<code>src/transcribeQueue.js</code>). 20 new tests; no integration. ✅</p>
+</li>
+<li><p><strong>Sprint 25 (T-3.2):</strong> wire the queue through <code>AudioRecorder.transcribe</code> + <code>idle --transcribe</code> CLI flag + end-to-end smoke. ⏳</p>
+</li>
+<li><p><strong>Goal:</strong> every chunk produced by <code>idle</code> gets auto-transcribed after its WAV header is finalised. Transcript text is stored either in the existing sidecar JSON (extending the schema to v2) or as a sibling <code>.txt</code> (parallel to the WAV).</p>
+</li>
+<li><p><strong>Touches:</strong> <code>src/audioRecorder.js</code> (extend <code>_attachFinalize</code> to call into a new transcription hook), <code>src/transcribe.js</code> (already present from T-2; add a queue if needed), <code>src/chunkSidecar.js</code> (potential schema bump), tests.</p>
+</li>
+<li><p><strong>Decision to make:</strong> sibling <code>.txt</code> vs sidecar extension. Lean toward <strong>sibling <code>.txt</code></strong> because: (1) keeps the schema-v1 sidecar untouched, (2) matches whisper.cpp&#39;s own <code>--output-txt</code> convention, (3) makes failure modes orthogonal — a missing <code>.txt</code> means &quot;transcription pending/failed&quot;, a complete sidecar means &quot;capture metadata is fine regardless&quot;. Justify the choice inline in the sprint log when the sprint runs.</p>
+</li>
+<li><p><strong>Steps:</strong></p>
+<ol>
 <li>Add a <code>transcribe: true</code> constructor option to <code>AudioRecorder</code> (default off until enabled at the CLI level).</li>
 <li>When <code>_attachFinalize</code> runs its <code>&#39;close&#39;</code> callback, if <code>transcribe</code> is on, enqueue a transcription job for the just-finalised WAV.</li>
 <li>Run jobs serially via a tiny in-memory queue so two long chunks don&#39;t compete for CPU.</li>
 <li>Write <code>&lt;chunk&gt;.txt</code> on success; emit a single-line <code>[transcribed]</code> log; on failure, leave the WAV+sidecar in place and log the error.</li>
 </ol>
 </li>
-<li><strong>Validation:</strong> <code>node src/index.js idle --name t3-demo --duration 20 --transcribe</code> produces 1–3 chunks; each chunk has a non-empty <code>.txt</code> next to the <code>.wav</code> and <code>.json</code>.</li>
-<li><strong>Acceptance criteria:</strong> for non-empty chunks, a <code>.txt</code> materialises within ~10× chunk-duration seconds of the chunk closing; for empty chunks, no <code>.txt</code> is produced (or it&#39;s an empty file, depending on the T-5 design).</li>
-<li><strong>Rollback:</strong> revert the <code>transcribe</code> flag — capture still works exactly as it does today.</li>
-<li><strong>Risk:</strong> transcription falling behind capture in a long monologue. T-5 owns the fix; T-3 just observes the behavior honestly.</li>
+<li><p><strong>Validation:</strong> <code>node src/index.js idle --name t3-demo --duration 20 --transcribe</code> produces 1–3 chunks; each chunk has a non-empty <code>.txt</code> next to the <code>.wav</code> and <code>.json</code>.</p>
+</li>
+<li><p><strong>Acceptance criteria:</strong> for non-empty chunks, a <code>.txt</code> materialises within ~10× chunk-duration seconds of the chunk closing; for empty chunks, no <code>.txt</code> is produced (or it&#39;s an empty file, depending on the T-5 design).</p>
+</li>
+<li><p><strong>Rollback:</strong> revert the <code>transcribe</code> flag — capture still works exactly as it does today.</p>
+</li>
+<li><p><strong>Risk:</strong> transcription falling behind capture in a long monologue. T-5 owns the fix; T-3 just observes the behavior honestly.</p>
+</li>
 </ul>
 <h3>T-4 — Per-chunk markdown persistence</h3>
 <ul>

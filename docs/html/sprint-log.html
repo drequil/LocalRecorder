@@ -610,6 +610,48 @@ Then re-run: npm run transcribe:check
 </li>
 <li>Why: T-2 is the smallest end-to-end proof that the Phase 4 plan is sound. With a single subcommand running cleanly against a real whisper.cpp binary, the next sprint (T-3) gets to focus on lifecycle integration (&quot;auto-transcribe each chunk as idle rotates it&quot;) without having to debug &quot;does the binary work at all?&quot; simultaneously. The two filename conventions surprise was exactly the kind of risk the sprint plan called out for T-2 (&quot;whisper.cpp&#39;s CLI flag surface differs across versions&quot;) — and was caught and resolved on the first real run by the defensive code path written before the first real run, which is the whole point of writing tests against the spec instead of against the implementation</li>
 </ul>
+<h2>Sprint 24 (T-3.1): Serial transcription queue (Completed)</h2>
+<ul>
+<li>First half of T-3 (the sprint-plan T-3 is being delivered as two mini-sprints since the queue is a self-contained primitive that&#39;s worth landing on its own commit). This sprint adds the queue. Sprint 25 will wire it through <code>AudioRecorder.transcribe</code> + <code>idle --transcribe</code> and run the end-to-end smoke</li>
+<li>Added <code>src/transcribeQueue.js</code>. <code>createTranscribeQueue({ run, onSuccess?, onFailure? })</code> returns <code>{ enqueue, drain, length }</code>:<ul>
+<li><code>enqueue(job)</code> returns <code>Promise&lt;{ ok, result? } | { ok, error? }&gt;</code>. Never rejects — failure shapes are reported on the resolved value so callers can fire-and-forget without worrying about unhandled rejections. Internally chains via <code>head.then(...)</code> so jobs run strictly serially: <code>enqueue(B)</code> does not start its <code>run(B)</code> until A&#39;s promise has settled, regardless of A&#39;s outcome</li>
+<li><code>drain()</code> returns a promise that resolves the next time the queue is observed empty. Implemented via <code>setImmediate</code> polling rather than a shared resolver fired from inside the job chain — see the &quot;tricky bit&quot; note below. Calling <code>enqueue</code> while a <code>drain</code> promise is pending extends the wait through the new job(s)</li>
+<li><code>length</code> is the number of jobs queued-but-not-yet-settled. Useful for backpressure logging in T-5</li>
+<li><code>onSuccess(job, result)</code> and <code>onFailure(job, error)</code> are invoked synchronously after each job settles; throws inside the loggers are caught so a bad logger cannot wedge the queue</li>
+</ul>
+</li>
+<li><strong>The tricky bit (worth documenting because it cost a round trip):</strong> the obvious implementation -- a <code>drainResolver</code> allocated when <code>pending</code> goes 0→1 and called when it transitions back to 0 -- gets the microtask ordering subtly wrong. Calling the resolver from inside the job&#39;s <code>head.then</code> callback fires <code>drainPromise</code>&#39;s continuations BEFORE the <code>enqueue()</code> promise&#39;s own <code>.then</code> chain. Pattern that breaks: <code>q.enqueue(j).then(observeSuccess); await q.drain()</code> -- <code>drain</code> would resolve before <code>observeSuccess</code> ran. The async-function unwrap takes an extra microtask or two, which is more than <code>queueMicrotask</code> can defer past. Final design polls via <code>setImmediate</code>: each task-loop tick checks <code>pending</code>, and between ticks all microtasks (including caller <code>.thens</code>) get a chance to settle. Cost is ~1 ms of task-loop latency per <code>drain</code> call, which is irrelevant at chunk-rotation timescales (seconds). Captured this trace path in the comment block on <code>drain</code> so future readers don&#39;t reinvent the failed microtask approach</li>
+<li>Out of scope for T-3.1, owned by T-5:<ul>
+<li><strong>Backpressure / max-length warning.</strong> Queue is unbounded; long monologues can grow it indefinitely. T-5 will add <code>transcribeQueueMax</code> (default 5) and a single-line warn-on-overflow log</li>
+<li><strong>Retry on failure.</strong> <code>run</code> failure is logged via <code>onFailure</code> and the queue marches on. T-5 will add a single retry per the sprint plan&#39;s resilience knobs</li>
+<li><strong>Skip-empty.</strong> The queue is policy-neutral; deciding whether a chunk is &quot;worth transcribing&quot; is the caller&#39;s job. T-5 will gate enqueue on the sidecar&#39;s <code>peak</code> field at the integration layer, not in the queue</li>
+</ul>
+</li>
+<li>Tests added (20 new in <code>tests/transcribeQueue.test.js</code>):<ul>
+<li><strong>Argument validation (5):</strong> throws on missing/non-function <code>run</code>, on non-function <code>onSuccess</code>, on non-function <code>onFailure</code>; accepts a minimal <code>{ run }</code> config</li>
+<li><strong>Idle queue (2):</strong> <code>length === 0</code> on fresh queue; <code>drain()</code> on empty queue resolves immediately</li>
+<li><strong>Happy path (3):</strong> enqueue resolves <code>{ ok: true, result }</code>; <code>onSuccess</code> fires with <code>(job, result)</code>; <code>drain()</code> waits for all jobs</li>
+<li><strong>Serial execution (2):</strong> B doesn&#39;t start until A settles (verified with deferred-promise gates); three jobs with intentionally-staggered delays settle in enqueue order, not completion-order</li>
+<li><strong>Failure handling (5):</strong> error in one job doesn&#39;t block subsequent jobs; <code>onFailure</code> fires on failure and <code>onSuccess</code> does not; synchronously-thrown errors inside <code>run</code> are caught the same way as async rejections; throwing <code>onSuccess</code> does not poison the queue; throwing <code>onFailure</code> does not poison the queue</li>
+<li><strong>Length and drain re-arming (3):</strong> <code>length</code> reflects queued + running jobs; <code>drain()</code> captures jobs enqueued after a previous drain settled (this is the test that flushed out the microtask-ordering bug above); <code>drain()</code> called between enqueues waits for both before-call and after-call jobs</li>
+</ul>
+</li>
+<li>Files added: <code>src/transcribeQueue.js</code>, <code>tests/transcribeQueue.test.js</code></li>
+<li>Files modified: <code>docs/sprint-log.md</code>, regenerated HTML mirrors</li>
+<li>Validation:<ul>
+<li><code>node --check src/transcribeQueue.js</code> clean</li>
+<li><code>npm test</code> — 193/193 passing across 14 suites (173 → 193 with 20 new queue tests)</li>
+<li>No new external dependencies; pure JS, only uses built-in <code>Promise</code> + <code>setImmediate</code></li>
+</ul>
+</li>
+<li>Known limitations:<ul>
+<li><strong>Polling cost:</strong> each <code>drain()</code> call uses <code>setImmediate</code> ticks while pending &gt; 0. On a fully-loaded event loop those ticks could in theory queue up — measured cost on this machine was sub-millisecond per tick, well under chunk-rotation rates. T-5 will revisit if there&#39;s any sign of starvation</li>
+<li><strong>No structured logger.</strong> Success and failure callbacks are fire-and-forget; the queue doesn&#39;t itself emit any logs. T-3.2 will wire <code>console.log</code> for <code>[transcribed]</code> lines from the integration side so the queue stays generic</li>
+<li><strong><code>pending</code> is observable but not the deeper queue depth (running + queued split).</strong> Internally there is no separate &quot;running&quot; vs &quot;queued&quot; bucket because we use a promise chain rather than an array. If T-5 needs that distinction for backpressure decisions, a small <code>running</code> flag can be tracked alongside <code>pending</code> cheaply</li>
+</ul>
+</li>
+<li>Why: the integration in Sprint 25 wants to enqueue a transcription per chunk-rotation event. Without a queue, two adjacent long chunks would race two <code>whisper-cli</code> processes against each other on the same CPU and the same model file mapping. Landing the queue as its own primitive before any of the integration plumbing means the integration sprint can focus on &quot;where do we hook this in&quot; rather than &quot;does serialisation work&quot; — and the queue gets its own unit-test surface that the integration tests can rely on rather than duplicate</li>
+</ul>
 
 </body>
 </html>
