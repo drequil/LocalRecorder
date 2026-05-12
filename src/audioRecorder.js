@@ -1,6 +1,7 @@
 require('./recorderPatch'); // must come before node-record-lpcm16 is loaded
 const recorder = require('node-record-lpcm16');
 const fs = require('fs');
+const { finalizeWavHeader } = require('./wavHeaderFix');
 
 class AudioRecorder {
   constructor(options = {}) {
@@ -121,7 +122,21 @@ class AudioRecorder {
       this.recording = null;
     }
     if (this.fileStream) {
-      this.fileStream.end();
+      const stream = this.fileStream;
+      const wavPath = typeof stream.path === 'string' && /\.wav$/i.test(stream.path)
+        ? stream.path
+        : null;
+      if (wavPath && typeof stream.once === 'function') {
+        stream.once('close', () => {
+          try {
+            finalizeWavHeader(wavPath);
+          } catch (err) {
+            // Header fixup is best-effort; lenient players still play the file.
+            console.warn(`WAV header finalize skipped for ${wavPath}: ${err.message}`);
+          }
+        });
+      }
+      stream.end();
       this.fileStream = null;
     }
     console.log('Recording stopped');

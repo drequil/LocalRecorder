@@ -253,6 +253,36 @@
 </li>
 <li>Why: half of the user&#39;s stated goal is &quot;recording working&quot;. This sprint produces a file that contains real audible content with a valid RIFF/WAVE header that sox itself round-trips through <code>stat</code>. Combined with MS-3, the listen-then-record demonstration is now end-to-end functional on this machine</li>
 </ul>
+<h2>Sprint 15 (MS-4.5): WAV Header Fixup (Completed)</h2>
+<ul>
+<li>Closes the MS-4 known-limitation about sox writing a ~2 GiB placeholder for the RIFF and <code>data</code> chunk sizes when piping WAV to stdout. After <code>stop()</code>, we now rewrite both size fields in-place to match the actual on-disk file size, so strict parsers (and metadata tooling that trusts the header) get truthful sizes</li>
+<li>Added <code>src/wavHeaderFix.js</code>: pure <code>finalizeWavHeader(filePath)</code> helper. Opens the file <code>r+</code>, walks the RIFF chunk list (tolerates intermediate <code>JUNK</code>, <code>LIST</code>, <code>bext</code>, etc.), locates <code>data</code>, computes <code>trueDataSize = fileSize - dataPayloadOffset</code> and <code>trueRiffSize = fileSize - 8</code>, and patches the 4-byte size fields at offsets 4 and <code>dataPayloadOffset - 4</code>. Returns a result object with both before/after values for diagnostics. Includes a <code>HEADER_SCAN_LIMIT</code> of 8 KiB to bound the chunk walk against pathological inputs</li>
+<li>Wired into <code>AudioRecorder.stop()</code>: when the active <code>fileStream</code>&#39;s path ends in <code>.wav</code>, register a one-shot <code>&#39;close&#39;</code> listener that runs <code>finalizeWavHeader</code> after the fs.WriteStream finishes flushing. Best-effort: failures <code>console.warn</code> and leave the file alone (lenient players don&#39;t care; this matches the same &quot;don&#39;t crash a successful capture over a header fix&quot; stance we used for the stream error handlers in MS-3 / MS-4)</li>
+<li>Guards are defensive against the existing Jest mocks: <code>typeof stream.path === &#39;string&#39;</code> and <code>typeof stream.once === &#39;function&#39;</code> mean the existing tests (which mock fileStream as a bare <code>{ end, on, write }</code>) still pass with no changes</li>
+<li>Tests added in <code>tests/wavHeaderFix.test.js</code>:<ul>
+<li>Rewrites a near-2 GiB placeholder to the actual size, preserving the PCM bytes</li>
+<li>Idempotent on an already-correct file (no diff in re-read bytes)</li>
+<li>Walks past intermediate <code>JUNK</code> + <code>LIST</code> chunks before finding <code>data</code></li>
+<li>Throws on non-RIFF input</li>
+<li>Throws when the file is too short to be a WAV</li>
+<li>Throws when the chunk list contains no <code>data</code> chunk</li>
+</ul>
+</li>
+<li>Files added: <code>src/wavHeaderFix.js</code>, <code>tests/wavHeaderFix.test.js</code></li>
+<li>Files modified: <code>src/audioRecorder.js</code>, <code>docs/sprint-log.md</code>, regenerated HTML mirrors</li>
+<li>Validation:<ul>
+<li><code>npm test</code> — 47/47 passing across 5 suites (41 -&gt; 47 with 6 new wavHeaderFix tests)</li>
+<li><code>node tools/smoke-record.js demo-fixed.wav 2000</code> -- produced a 57,344-byte WAV; header now reports <code>dataSize: 57300</code> (was <code>2147479552</code> before this sprint), <code>riffSize: 57336</code>, both matching the on-disk reality (57344 - 44 = 57300 ✓). <code>sox stat</code> parses 28,650 samples / 1.79 seconds / max amplitude 0.112, no warnings</li>
+<li><code>Get-Process sox</code> after the run -- empty</li>
+</ul>
+</li>
+<li>Known limitations:<ul>
+<li>The fix runs after sox exits and the fs.WriteStream&#39;s <code>&#39;close&#39;</code> event fires. If the process is killed before that path completes (hard <code>kill -9</code>), the file is left with the placeholder header. Lenient players still play it; strict parsers don&#39;t. Acceptable trade-off</li>
+<li>Fix is skipped for non-<code>.wav</code> extensions. <code>idleListen()</code> writes per-chunk WAVs and is broken in other ways already; MS-6 will fold this helper into the rolling-chunk rotation</li>
+</ul>
+</li>
+<li>Why: MS-4 deliberately deferred this so the WAV-from-pipe milestone could land cleanly. Doing it now (before MS-5&#39;s <code>--duration</code> flag exercises the same code path many more times) means every WAV the project produces from here on has truthful header sizes by default</li>
+</ul>
 
 </body>
 </html>

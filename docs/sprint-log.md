@@ -179,3 +179,26 @@ Next: MS-1 — sox dependency probe. After that the track proceeds linearly thro
   - `idleListen()` got the same error handler but its single-file append behavior is still broken for WAV (multiple back-to-back headers per file). MS-6 owns the per-chunk rolling file rewrite that makes idle mode produce playable files
   - The CLI `record` subcommand still relies on Ctrl+C for termination, which on Windows can race sox's shutdown. The smoke tool bypasses this by calling `recorder.stop()` directly; MS-5 introduces `--duration` for the CLI
 - Why: half of the user's stated goal is "recording working". This sprint produces a file that contains real audible content with a valid RIFF/WAVE header that sox itself round-trips through `stat`. Combined with MS-3, the listen-then-record demonstration is now end-to-end functional on this machine
+
+## Sprint 15 (MS-4.5): WAV Header Fixup (Completed)
+- Closes the MS-4 known-limitation about sox writing a ~2 GiB placeholder for the RIFF and `data` chunk sizes when piping WAV to stdout. After `stop()`, we now rewrite both size fields in-place to match the actual on-disk file size, so strict parsers (and metadata tooling that trusts the header) get truthful sizes
+- Added `src/wavHeaderFix.js`: pure `finalizeWavHeader(filePath)` helper. Opens the file `r+`, walks the RIFF chunk list (tolerates intermediate `JUNK`, `LIST`, `bext`, etc.), locates `data`, computes `trueDataSize = fileSize - dataPayloadOffset` and `trueRiffSize = fileSize - 8`, and patches the 4-byte size fields at offsets 4 and `dataPayloadOffset - 4`. Returns a result object with both before/after values for diagnostics. Includes a `HEADER_SCAN_LIMIT` of 8 KiB to bound the chunk walk against pathological inputs
+- Wired into `AudioRecorder.stop()`: when the active `fileStream`'s path ends in `.wav`, register a one-shot `'close'` listener that runs `finalizeWavHeader` after the fs.WriteStream finishes flushing. Best-effort: failures `console.warn` and leave the file alone (lenient players don't care; this matches the same "don't crash a successful capture over a header fix" stance we used for the stream error handlers in MS-3 / MS-4)
+- Guards are defensive against the existing Jest mocks: `typeof stream.path === 'string'` and `typeof stream.once === 'function'` mean the existing tests (which mock fileStream as a bare `{ end, on, write }`) still pass with no changes
+- Tests added in `tests/wavHeaderFix.test.js`:
+  - Rewrites a near-2 GiB placeholder to the actual size, preserving the PCM bytes
+  - Idempotent on an already-correct file (no diff in re-read bytes)
+  - Walks past intermediate `JUNK` + `LIST` chunks before finding `data`
+  - Throws on non-RIFF input
+  - Throws when the file is too short to be a WAV
+  - Throws when the chunk list contains no `data` chunk
+- Files added: `src/wavHeaderFix.js`, `tests/wavHeaderFix.test.js`
+- Files modified: `src/audioRecorder.js`, `docs/sprint-log.md`, regenerated HTML mirrors
+- Validation:
+  - `npm test` — 47/47 passing across 5 suites (41 -> 47 with 6 new wavHeaderFix tests)
+  - `node tools/smoke-record.js demo-fixed.wav 2000` -- produced a 57,344-byte WAV; header now reports `dataSize: 57300` (was `2147479552` before this sprint), `riffSize: 57336`, both matching the on-disk reality (57344 - 44 = 57300 ✓). `sox stat` parses 28,650 samples / 1.79 seconds / max amplitude 0.112, no warnings
+  - `Get-Process sox` after the run -- empty
+- Known limitations:
+  - The fix runs after sox exits and the fs.WriteStream's `'close'` event fires. If the process is killed before that path completes (hard `kill -9`), the file is left with the placeholder header. Lenient players still play it; strict parsers don't. Acceptable trade-off
+  - Fix is skipped for non-`.wav` extensions. `idleListen()` writes per-chunk WAVs and is broken in other ways already; MS-6 will fold this helper into the rolling-chunk rotation
+- Why: MS-4 deliberately deferred this so the WAV-from-pipe milestone could land cleanly. Doing it now (before MS-5's `--duration` flag exercises the same code path many more times) means every WAV the project produces from here on has truthful header sizes by default
