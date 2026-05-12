@@ -4,6 +4,17 @@ const fs = require('fs');
 const path = require('path');
 const { finalizeWavHeader } = require('./wavHeaderFix');
 
+// Single source of truth for the capture format we hand off to the transcription
+// stage. Whisper expects 16 kHz mono 16-bit signed PCM; producing anything else
+// forces a resample step downstream. Keep this object frozen so callers cannot
+// accidentally mutate the shared default.
+const WHISPER_AUDIO_FORMAT = Object.freeze({
+  sampleRate: 16000,
+  channels: 1,
+  bitDepth: 16,
+  encoding: 'signed-integer',
+});
+
 function defaultChunkFilename(now = new Date(), suffix = '') {
   const pad = (n, w = 2) => String(n).padStart(w, '0');
   const ts =
@@ -17,8 +28,7 @@ class AudioRecorder {
   constructor(options = {}) {
     const { idleThreshold, idleSilenceSeconds, ...rest } = options;
     this.options = {
-      sampleRate: 16000,
-      channels: 1,
+      ...WHISPER_AUDIO_FORMAT,
       ...rest,
     };
     this.idleThreshold = Number.isFinite(idleThreshold) ? idleThreshold : 0.5;
@@ -209,3 +219,4 @@ class AudioRecorder {
 
 module.exports = AudioRecorder;
 module.exports.defaultChunkFilename = defaultChunkFilename;
+module.exports.WHISPER_AUDIO_FORMAT = WHISPER_AUDIO_FORMAT;

@@ -120,13 +120,13 @@
 <td>MS-7</td>
 <td>Whisper-aligned defaults</td>
 <td>Default capture is 16 kHz mono 16-bit signed PCM in WAV</td>
-<td>next</td>
+<td>✅</td>
 </tr>
 <tr>
 <td>MS-8</td>
 <td>Chunk metadata sidecars</td>
 <td>Each idle-mode WAV gets a sidecar <code>.json</code> with start, end, peak</td>
-<td>pending</td>
+<td>next</td>
 </tr>
 </tbody></table>
 <p>Eight mini-sprints; each should be ~30–90 minutes of work. After MS-3 you can demo &quot;listening&quot;. After MS-4 you can demo &quot;recording&quot;. After MS-8 the audio capture pipeline is ready to hand off to a transcription sprint.</p>
@@ -224,19 +224,11 @@
 <li><strong>Realized acceptance criteria:</strong> structural validity of every produced chunk verified via <code>tools/smoke-idle.js</code> (header walk + <code>sox -n stat</code>); 0 chunks in a quiet room is a valid outcome (placeholder auto-deleted).</li>
 <li><strong>Lessons captured in <code>docs/sprint-log.md</code> Sprint 17:</strong> missing <code>endOnSilence: true</code> + listening on the Recording instead of its stream were both real-hardware-only bugs that didn&#39;t show up in mock-only tests. Added a <code>_attachFinalize</code> shared helper to eliminate duplicate WAV-header finalization between <code>idleListen</code> and <code>stop()</code>.</li>
 </ul>
-<h3>MS-7 — Whisper-aligned defaults</h3>
+<h3>MS-7 — Whisper-aligned defaults (Completed in Sprint 18)</h3>
 <ul>
-<li><strong>Goal:</strong> capture format defaults to 16 kHz mono 16-bit signed PCM in WAV (<code>bitwidth: 16</code>, <code>channels: 1</code>, <code>sampleRate: 16000</code>, <code>audioType: &#39;wav&#39;</code>, <code>encoding: &#39;signed-integer&#39;</code>), so Whisper consumes recordings with no resampling.</li>
-<li><strong>Touches:</strong> <code>src/audioRecorder.js</code> default options block, tests.</li>
-<li><strong>Steps:</strong><ol>
-<li>Update default options object.</li>
-<li>Add a test that asserts the defaults are exactly the Whisper-compatible set.</li>
-</ol>
-</li>
-<li><strong>Validation:</strong> record a 2-second sample, run <code>sox out.wav -n stat</code> and confirm the reported rate/channels/depth.</li>
-<li><strong>Acceptance criteria:</strong> sox stat reports 16000 Hz, 1 channel, 16-bit signed.</li>
-<li><strong>Rollback:</strong> revert the defaults block.</li>
-<li><strong>Risk:</strong> none of significance; this is metadata.</li>
+<li><strong>Goal:</strong> capture format is 16 kHz mono 16-bit signed PCM in WAV by default, and the contract is enforceable from a single source of truth.</li>
+<li><strong>Outcome:</strong> <code>WHISPER_AUDIO_FORMAT = { sampleRate: 16000, channels: 1, bitDepth: 16, encoding: &#39;signed-integer&#39; }</code> exported (frozen) from <code>src/audioRecorder.js</code>. Constructor defaults spread it. <code>src/recorderPatch.js</code> honors <code>bitDepth</code>/<code>encoding</code> options. <code>tools/smoke-record.js</code> parses the WAV <code>fmt </code> chunk and asserts every field matches the contract.</li>
+<li><strong>Realized acceptance criteria:</strong> smoke-record reports <code>formatCode: 1 (PCM), channels: 1, sampleRate: 16000, byteRate: 32000, blockAlign: 2, bitsPerSample: 16</code>, and <code>whisperFormatMatch.ok: true</code>.</li>
 </ul>
 <h3>MS-8 — Chunk metadata sidecars</h3>
 <ul>

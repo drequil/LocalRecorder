@@ -37,8 +37,8 @@ Listening before recording, for three reasons:
 | MS-5 | Fixed-duration record | `record --duration 5 out.wav` stops cleanly after ~5 s | ✅ |
 | MS-5.1 | Sox-side duration trim (optional) | Captured audio length matches `--duration` to within 100 ms (compensates the ~400 ms Windows startup latency) | optional |
 | MS-6 | Rolling idle chunks | `idle <dir>` writes timestamped per-silence WAV files in `<dir>` | ✅ |
-| MS-7 | Whisper-aligned defaults | Default capture is 16 kHz mono 16-bit signed PCM in WAV | next |
-| MS-8 | Chunk metadata sidecars | Each idle-mode WAV gets a sidecar `.json` with start, end, peak | pending |
+| MS-7 | Whisper-aligned defaults | Default capture is 16 kHz mono 16-bit signed PCM in WAV | ✅ |
+| MS-8 | Chunk metadata sidecars | Each idle-mode WAV gets a sidecar `.json` with start, end, peak | next |
 
 Eight mini-sprints; each should be ~30–90 minutes of work. After MS-3 you can demo "listening". After MS-4 you can demo "recording". After MS-8 the audio capture pipeline is ready to hand off to a transcription sprint.
 
@@ -129,17 +129,11 @@ Eight mini-sprints; each should be ~30–90 minutes of work. After MS-3 you can 
 - **Realized acceptance criteria:** structural validity of every produced chunk verified via `tools/smoke-idle.js` (header walk + `sox -n stat`); 0 chunks in a quiet room is a valid outcome (placeholder auto-deleted).
 - **Lessons captured in `docs/sprint-log.md` Sprint 17:** missing `endOnSilence: true` + listening on the Recording instead of its stream were both real-hardware-only bugs that didn't show up in mock-only tests. Added a `_attachFinalize` shared helper to eliminate duplicate WAV-header finalization between `idleListen` and `stop()`.
 
-### MS-7 — Whisper-aligned defaults
+### MS-7 — Whisper-aligned defaults (Completed in Sprint 18)
 
-- **Goal:** capture format defaults to 16 kHz mono 16-bit signed PCM in WAV (`bitwidth: 16`, `channels: 1`, `sampleRate: 16000`, `audioType: 'wav'`, `encoding: 'signed-integer'`), so Whisper consumes recordings with no resampling.
-- **Touches:** `src/audioRecorder.js` default options block, tests.
-- **Steps:**
-  1. Update default options object.
-  2. Add a test that asserts the defaults are exactly the Whisper-compatible set.
-- **Validation:** record a 2-second sample, run `sox out.wav -n stat` and confirm the reported rate/channels/depth.
-- **Acceptance criteria:** sox stat reports 16000 Hz, 1 channel, 16-bit signed.
-- **Rollback:** revert the defaults block.
-- **Risk:** none of significance; this is metadata.
+- **Goal:** capture format is 16 kHz mono 16-bit signed PCM in WAV by default, and the contract is enforceable from a single source of truth.
+- **Outcome:** `WHISPER_AUDIO_FORMAT = { sampleRate: 16000, channels: 1, bitDepth: 16, encoding: 'signed-integer' }` exported (frozen) from `src/audioRecorder.js`. Constructor defaults spread it. `src/recorderPatch.js` honors `bitDepth`/`encoding` options. `tools/smoke-record.js` parses the WAV `fmt ` chunk and asserts every field matches the contract.
+- **Realized acceptance criteria:** smoke-record reports `formatCode: 1 (PCM), channels: 1, sampleRate: 16000, byteRate: 32000, blockAlign: 2, bitsPerSample: 16`, and `whisperFormatMatch.ok: true`.
 
 ### MS-8 — Chunk metadata sidecars
 

@@ -52,6 +52,30 @@ describe('windowsSoxRecorder', () => {
     ]);
   });
 
+  test('honours options.bitDepth and options.encoding overrides', () => {
+    const { args } = windowsSoxRecorder({
+      sampleRate: 48000,
+      channels: 2,
+      audioType: 'wav',
+      bitDepth: 24,
+      encoding: 'floating-point',
+    });
+    expect(args[args.indexOf('--bits') + 1]).toBe('24');
+    expect(args[args.indexOf('--encoding') + 1]).toBe('floating-point');
+    expect(args[args.indexOf('--rate') + 1]).toBe('48000');
+    expect(args[args.indexOf('--channels') + 1]).toBe('2');
+  });
+
+  test('defaults to 16-bit signed-integer when bitDepth/encoding not supplied', () => {
+    const { args } = windowsSoxRecorder({
+      sampleRate: 16000,
+      channels: 1,
+      audioType: 'wav',
+    });
+    expect(args[args.indexOf('--bits') + 1]).toBe('16');
+    expect(args[args.indexOf('--encoding') + 1]).toBe('signed-integer');
+  });
+
   test('uses thresholdStart/thresholdEnd when provided', () => {
     const { args } = windowsSoxRecorder({
       sampleRate: 16000,

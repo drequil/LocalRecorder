@@ -363,6 +363,34 @@
 </li>
 <li>Why: this closes the longest-standing broken-feature limitation in the project. Idle mode now actually produces what users expect -- a directory of independently playable WAVs, one per spoken burst, with truthful headers and no empty placeholders. Combined with MS-3 (level meter), MS-4/MS-4.5 (file recording), and MS-5 (duration-limited recording), the full capture pipeline is functionally complete. MS-7 (Whisper-aligned defaults) and MS-8 (chunk metadata sidecars) are quality-of-life polish on top of working machinery</li>
 </ul>
+<h2>Sprint 18 (MS-7): Whisper-Aligned Defaults (Completed)</h2>
+<ul>
+<li>Made the capture format an explicit, frozen contract instead of an implicit emergent property of three hardcoded constants spread across three files. The contract is <code>WHISPER_AUDIO_FORMAT = { sampleRate: 16000, channels: 1, bitDepth: 16, encoding: &#39;signed-integer&#39; }</code>, exported from <code>src/audioRecorder.js</code> and frozen via <code>Object.freeze</code></li>
+<li>Constructor defaults now spread <code>WHISPER_AUDIO_FORMAT</code> instead of inlining <code>{ sampleRate: 16000, channels: 1 }</code>. User overrides still win. <code>audioType</code> stays per-call (<code>&#39;wav&#39;</code> for start/idle, <code>&#39;raw&#39;</code> for listen) since it isn&#39;t part of the format contract -- it&#39;s a wire-format choice for the sox→Node pipe</li>
+<li>Plumbed <code>bitDepth</code> and <code>encoding</code> through <code>src/recorderPatch.js</code>. Previously the Windows sox patch hardcoded <code>--bits 16</code> and <code>--encoding signed-integer</code>; now it reads <code>options.bitDepth</code> and <code>options.encoding</code> with the same defaults. So the contract is genuinely option-driven on the path that matters (Windows). The upstream <code>node-record-lpcm16/recorders/sox.js</code> still hardcodes the same values on non-Windows platforms, which is fine because the contract values match</li>
+<li><code>tools/smoke-record.js</code> now parses the <code>fmt </code> chunk of the produced WAV (formatCode, channels, sample rate, byte rate, block align, bits per sample) and asserts every field matches <code>WHISPER_AUDIO_FORMAT</code>. This is the real proof that what we ship on disk is what Whisper will consume without resampling</li>
+<li>Tests added (5 new in audioRecorder.test.js, 2 new in recorderPatch.test.js):<ul>
+<li><code>WHISPER_AUDIO_FORMAT</code> shape and frozen-ness</li>
+<li>Constructor defaults match the contract for every field</li>
+<li>User overrides win over format defaults</li>
+<li><code>start()</code> passes the Whisper fields through to the recorder</li>
+<li><code>windowsSoxRecorder</code> honors <code>bitDepth</code>/<code>encoding</code> overrides</li>
+<li><code>windowsSoxRecorder</code> falls back to 16-bit signed-integer when unspecified</li>
+</ul>
+</li>
+<li>Files modified: <code>src/audioRecorder.js</code>, <code>src/recorderPatch.js</code>, <code>tests/audioRecorder.test.js</code>, <code>tests/recorderPatch.test.js</code>, <code>tools/smoke-record.js</code>, <code>docs/sprint-log.md</code>, <code>docs/sprint-plan.md</code>, regenerated HTML mirrors</li>
+<li>Validation:<ul>
+<li><code>npm test</code> -- 68/68 passing across 6 suites (61 -&gt; 68 with 7 new contract tests)</li>
+<li><code>node tools/smoke-record.js demo-whisper.wav 2000</code> -- exit 0, <code>whisperFormatMatch.ok: true</code>, produced WAV has <code>fmt: { formatCode: 1 (PCM), channels: 1, sampleRate: 16000, byteRate: 32000, blockAlign: 2, bitsPerSample: 16 }</code>. <code>sox stat</code> parses without complaint</li>
+</ul>
+</li>
+<li>Known limitations:<ul>
+<li>The format contract isn&#39;t enforced on non-Windows platforms beyond what <code>node-record-lpcm16</code> itself does; if upstream changes its defaults, the macOS/Linux paths would drift. Mitigation: the smoke validator catches drift on any platform. Future MS-7.x: replace the upstream sox recorder on macOS/Linux too (we already do it on Windows for <code>--default-device</code> reasons), so the contract is enforced end-to-end</li>
+<li><code>WHISPER_AUDIO_FORMAT</code> does not include <code>audioType</code> because the listen path requires <code>&#39;raw&#39;</code> while start/idle require <code>&#39;wav&#39;</code>. The contract is about the <strong>sample format</strong>, not the <strong>wire format</strong></li>
+</ul>
+</li>
+<li>Why: until now, &quot;we record 16 kHz mono 16-bit signed PCM&quot; was an emergent property of three files happening to agree. Now it&#39;s a single named contract that downstream transcription code can <code>require()</code> directly. When T-1 lands, the whisper.cpp invocation will pull this same constant for its <code>-ar 16000 -ac 1</code> arguments, guaranteeing zero resampling and zero format mismatch debugging</li>
+</ul>
 
 </body>
 </html>

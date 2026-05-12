@@ -244,3 +244,48 @@ describe('defaultChunkFilename', () => {
     expect(defaultChunkFilename(fixed, '-2')).toBe('chunk-20260512-074753-123-2.wav');
   });
 });
+
+describe('WHISPER_AUDIO_FORMAT contract', () => {
+  const { WHISPER_AUDIO_FORMAT } = require('../src/audioRecorder');
+
+  test('is the Whisper-aligned 16k mono 16-bit signed PCM contract', () => {
+    expect(WHISPER_AUDIO_FORMAT).toEqual({
+      sampleRate: 16000,
+      channels: 1,
+      bitDepth: 16,
+      encoding: 'signed-integer',
+    });
+  });
+
+  test('is frozen so callers cannot mutate the shared default', () => {
+    expect(Object.isFrozen(WHISPER_AUDIO_FORMAT)).toBe(true);
+  });
+
+  test('AudioRecorder defaults match WHISPER_AUDIO_FORMAT', () => {
+    const fresh = new AudioRecorder();
+    for (const key of Object.keys(WHISPER_AUDIO_FORMAT)) {
+      expect(fresh.options[key]).toBe(WHISPER_AUDIO_FORMAT[key]);
+    }
+  });
+
+  test('user overrides win over the format defaults', () => {
+    const custom = new AudioRecorder({ sampleRate: 44100, bitDepth: 24 });
+    expect(custom.options.sampleRate).toBe(44100);
+    expect(custom.options.bitDepth).toBe(24);
+    expect(custom.options.channels).toBe(1); // untouched
+    expect(custom.options.encoding).toBe('signed-integer'); // untouched
+  });
+
+  test('start() passes the Whisper format fields to the recorder', () => {
+    const fresh = new AudioRecorder();
+    fresh.start('test.wav');
+    const lastCall = recorderLib.record.mock.calls.at(-1)[0];
+    expect(lastCall).toMatchObject({
+      sampleRate: 16000,
+      channels: 1,
+      bitDepth: 16,
+      encoding: 'signed-integer',
+      audioType: 'wav',
+    });
+  });
+});

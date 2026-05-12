@@ -12,6 +12,7 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const AudioRecorder = require('../src/audioRecorder');
+const { WHISPER_AUDIO_FORMAT } = require('../src/audioRecorder');
 
 const outputArg = process.argv[2] || path.join(__dirname, '..', 'smoke-record.wav');
 const outputPath = path.resolve(outputArg);
@@ -24,18 +25,43 @@ function readWavHeader(buf) {
   if (riff !== 'RIFF') return { ok: false, reason: `first 4 bytes are ${JSON.stringify(riff)}, expected "RIFF"` };
   if (wave !== 'WAVE') return { ok: false, reason: `bytes 8-12 are ${JSON.stringify(wave)}, expected "WAVE"` };
 
-  // Walk chunks looking for "data".
+  // Walk chunks looking for "fmt " and "data". The fmt chunk gives us format
+  // metadata (sample rate, channels, bit depth, encoding) that MS-7 needs to
+  // assert: the produced WAV is the Whisper-aligned 16k mono 16-bit signed PCM.
   let cursor = 12;
-  while (cursor + 8 <= buf.length) {
+  let fmt = null;
+  let data = null;
+  while (cursor + 8 <= buf.length && !(fmt && data)) {
     const chunkId = buf.toString('ascii', cursor, cursor + 4);
     const chunkSize = buf.readUInt32LE(cursor + 4);
-    if (chunkId === 'data') {
-      return { ok: true, dataOffset: cursor + 8, dataSize: chunkSize, riff, wave };
+    if (chunkId === 'fmt ') {
+      const formatCode = buf.readUInt16LE(cursor + 8);
+      fmt = {
+        formatCode, // 1 = PCM, 3 = IEEE float
+        channels: buf.readUInt16LE(cursor + 10),
+        sampleRate: buf.readUInt32LE(cursor + 12),
+        byteRate: buf.readUInt32LE(cursor + 16),
+        blockAlign: buf.readUInt16LE(cursor + 20),
+        bitsPerSample: buf.readUInt16LE(cursor + 22),
+      };
+    } else if (chunkId === 'data') {
+      data = { offset: cursor + 8, size: chunkSize };
     }
     cursor += 8 + chunkSize;
-    if (chunkSize % 2 === 1) cursor += 1; // chunk word alignment
+    if (chunkSize % 2 === 1) cursor += 1;
   }
-  return { ok: false, reason: 'no data chunk found' };
+  if (!data) return { ok: false, reason: 'no data chunk found' };
+  return { ok: true, riff, wave, fmt, dataOffset: data.offset, dataSize: data.size };
+}
+
+function matchesWhisperFormat(header) {
+  if (!header.ok || !header.fmt) return { ok: false, reason: 'no fmt chunk' };
+  const f = header.fmt;
+  if (f.formatCode !== 1) return { ok: false, reason: `formatCode ${f.formatCode} (want 1=PCM)` };
+  if (f.sampleRate !== WHISPER_AUDIO_FORMAT.sampleRate) return { ok: false, reason: `sampleRate ${f.sampleRate} (want ${WHISPER_AUDIO_FORMAT.sampleRate})` };
+  if (f.channels !== WHISPER_AUDIO_FORMAT.channels) return { ok: false, reason: `channels ${f.channels} (want ${WHISPER_AUDIO_FORMAT.channels})` };
+  if (f.bitsPerSample !== WHISPER_AUDIO_FORMAT.bitDepth) return { ok: false, reason: `bitsPerSample ${f.bitsPerSample} (want ${WHISPER_AUDIO_FORMAT.bitDepth})` };
+  return { ok: true };
 }
 
 function runSoxStat(filePath) {
@@ -80,14 +106,16 @@ setTimeout(() => {
 
     const buf = fs.readFileSync(outputPath);
     const header = readWavHeader(buf);
+    const whisper = matchesWhisperFormat(header);
     const soxStat = runSoxStat(outputPath);
 
     const result = {
-      ok: header.ok && soxStat.exitCode === 0,
+      ok: header.ok && whisper.ok && soxStat.exitCode === 0,
       outputPath,
       fileSize,
       durationMs,
       header,
+      whisperFormatMatch: whisper,
       soxStatExitCode: soxStat.exitCode,
       // sox stat reports values like "Length (seconds):    2.048000".
       soxStatExcerpt: soxStat.stderr

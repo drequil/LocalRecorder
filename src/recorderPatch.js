@@ -22,6 +22,8 @@ const SOX_RECORDER_PATH = require.resolve('node-record-lpcm16/recorders/sox');
 function windowsSoxRecorder(options) {
   const device = options.device != null ? String(options.device) : '0';
   const audioType = options.audioType || 'wav';
+  const encoding = options.encoding || 'signed-integer';
+  const bitDepth = options.bitDepth != null ? String(options.bitDepth) : '16';
 
   let args = [
     '--no-show-progress',
@@ -29,8 +31,8 @@ function windowsSoxRecorder(options) {
     device,
     '--rate', String(options.sampleRate),
     '--channels', String(options.channels),
-    '--encoding', 'signed-integer',
-    '--bits', '16',
+    '--encoding', encoding,
+    '--bits', bitDepth,
     '--type', audioType,
     '-',
   ];
