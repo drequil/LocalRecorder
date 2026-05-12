@@ -295,6 +295,195 @@
 <li><code>node src/index.js idle --name &lt;label&gt; --duration &lt;seconds&gt;</code> produces one valid WAV (plus matching JSON sidecar) per silence-delimited vocal burst, under <code>./recordings/&lt;label&gt;/</code>.</li>
 <li><code>npm test</code> is green and tests assert the new lifecycle invariants (Whisper-aligned defaults, sidecar shape, no double-start).</li>
 </ul>
+<hr>
+<h1>Sprint Plan — Phase 4 Track: Transcription</h1>
+<p>Goal of this track: take the captured WAV+sidecar pairs from Phase 3 and produce <strong>live, human-readable transcripts</strong> alongside them — same &quot;small atomic sprints, each ends in a runnable artifact&quot; cadence. The endgame is the user speaking into the mic and watching a <code>.md</code> file populate in real time as idle-mode rotates chunks.</p>
+<h2>Ordering principle</h2>
+<p>Same shape as Phase 3A/3B: prove the foundation before integrating.</p>
+<ol>
+<li>Probe the binary (T-1).</li>
+<li>Transcribe one file end-to-end via the CLI (T-2) — no idle integration yet.</li>
+<li>Wire transcription into the rotation lifecycle (T-3).</li>
+<li>Persist transcripts as human-reviewable markdown (T-4).</li>
+<li>Add the resilience knobs (T-5) — retries, error handling, skip empty/below-threshold chunks.</li>
+<li>Close the loop with an end-to-end demo (T-6).</li>
+</ol>
+<h2>Constraint inventory (known before we start)</h2>
+<ul>
+<li><code>whisper.cpp</code> ships a CLI binary whose name varies by install: <code>whisper-cli</code> (modern), <code>whisper</code> (some package managers), <code>main</code> (legacy). T-1 normalises detection across all three.</li>
+<li>The CLI also needs a model file (e.g. <code>ggml-base.en.bin</code>); models are 75 MB–3 GB depending on size. The user will need to download one before T-2 can run.</li>
+<li>Transcription is CPU-bound and chunky. A 30-second WAV on <code>base.en</code> takes ~5–15 s on a modern laptop CPU. T-3 must not block the rotation pipeline, and T-5 must handle the case where transcription falls behind capture.</li>
+<li>whisper.cpp does not implement <code>--version</code>. T-1&#39;s banner heuristic is the closest substitute and is intentionally lenient.</li>
+</ul>
+<h2>Sprint map</h2>
+<h3>Phase 4 — Transcription</h3>
+<table>
+<thead>
+<tr>
+<th>Sprint</th>
+<th>Title</th>
+<th>Outcome</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>T-1</td>
+<td>Whisper.cpp dependency probe</td>
+<td><code>npm run transcribe:check</code> reports the resolved binary or a clean install message</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>T-2</td>
+<td>Transcribe a known-good WAV via CLI</td>
+<td><code>node src/index.js transcribe &lt;file&gt;</code> prints text from a single WAV</td>
+<td>⏳</td>
+</tr>
+<tr>
+<td>T-3</td>
+<td>Wire transcription into idle rotation</td>
+<td>Each rotated chunk is auto-transcribed; transcript stored next to the WAV</td>
+<td>⏳</td>
+</tr>
+<tr>
+<td>T-4</td>
+<td>Per-chunk markdown persistence</td>
+<td><code>.md</code> per chunk combines transcript + sidecar metadata for human review</td>
+<td>⏳</td>
+</tr>
+<tr>
+<td>T-5</td>
+<td>Resilience: retries, skip empty, error handling</td>
+<td>Transcription survives bad chunks, slow runs, and silent rooms</td>
+<td>⏳</td>
+</tr>
+<tr>
+<td>T-6</td>
+<td>End-to-end &quot;speak → see markdown update&quot; demo</td>
+<td>Documented full run from <code>idle</code> start to live <code>.md</code> updates</td>
+<td>⏳</td>
+</tr>
+</tbody></table>
+<p>Six sprints; ~30–90 minutes each. After T-2 you can demo &quot;transcribe a file&quot;. After T-4 the per-chunk pipeline is feature-complete. T-5 hardens it. T-6 is the milestone the user actually asked for.</p>
+<hr>
+<h2>Sprint details</h2>
+<h3>T-1 — Whisper.cpp dependency probe (Completed in Sprint 22)</h3>
+<ul>
+<li><strong>Goal:</strong> detect whether a whisper.cpp CLI is callable from this Node process and surface a friendly install message if not.</li>
+<li><strong>Outcome:</strong> <code>tools/check-transcribe-deps.js</code> probes three candidate binary names in order (<code>whisper-cli</code>, <code>whisper</code>, <code>main</code>) via <code>spawnSync(name, [&#39;--help&#39;])</code>. First one that exits 0 wins. ENOENT moves on; non-ENOENT failures are preserved in diagnostics. New <code>npm run transcribe:check</code> script. Per-platform install hints (winget unavailable for Windows → GitHub releases; <code>brew install whisper-cpp</code> on macOS; build-from-source instructions on Linux). README gains a &quot;Transcription Prerequisites&quot; section flagged &quot;upcoming — not yet required by the CLI&quot;.</li>
+<li><strong>Realized acceptance criteria:</strong> without whisper.cpp installed, <code>node tools/check-transcribe-deps.js</code> exits 1 and prints the Windows install hint block (verified on this machine). With whisper.cpp installed, the probe will print the resolved binary path and any banner-derived version. <code>npm test</code> reports 137/137 passing across 11 suites (119 → 137 with 18 new tests across <code>parseWhisperHelp</code>, <code>pickCandidateBinary</code>, <code>findOnPath</code>, and <code>printInstallHints</code>).</li>
+</ul>
+<h3>T-2 — Transcribe a known-good WAV via CLI</h3>
+<ul>
+<li><strong>Goal:</strong> prove the transcription path end-to-end on a single WAV file, with no idle integration. <code>node src/index.js transcribe &lt;file.wav&gt;</code> reads the WAV, invokes whisper.cpp with a sensible default model, and prints the transcript to stdout.</li>
+<li><strong>Touches:</strong> new <code>src/transcribe.js</code> (pure wrapper around <code>spawn</code> that returns a transcription promise), new <code>transcribe</code> subcommand in <code>src/index.js</code>, tests in <code>tests/transcribe.test.js</code>. New <code>--model &lt;path&gt;</code> flag with a sensible default (<code>./models/ggml-base.en.bin</code> if present, else error with &quot;set --model or place a model here&quot;). Maybe a separate <code>tools/check-transcribe-model.js</code> if model discovery turns into more than a one-liner.</li>
+<li><strong>Steps:</strong><ol>
+<li>Resolve the whisper.cpp binary using the same lookup as T-1.</li>
+<li>Spawn <code>whisper-cli --no-prints --output-txt -m &lt;model&gt; -f &lt;wav&gt;</code>. Capture stdout/stderr; assert exit 0.</li>
+<li>Read the resulting <code>&lt;wav&gt;.txt</code> (whisper.cpp&#39;s default output convention) and print to stdout.</li>
+<li>Add a <code>--json</code> flag that emits <code>{ text, model, durationMs, wav, version }</code> for downstream consumers.</li>
+</ol>
+</li>
+<li><strong>Validation:</strong> record a 5-second test WAV via <code>record --duration 5 hello.wav</code>. Speak &quot;this is a test&quot;. Run <code>node src/index.js transcribe hello.wav</code>. Expect text resembling the spoken phrase.</li>
+<li><strong>Acceptance criteria:</strong> for a non-silent WAV, the printed transcript is non-empty and recognisably close to the spoken content. Exit 0 on success; exit 1 with diagnostics on missing binary, missing model, or non-WAV input.</li>
+<li><strong>Rollback:</strong> delete the new file/subcommand; T-1 is the only Phase 4 surface that remains.</li>
+<li><strong>Risk:</strong> whisper.cpp&#39;s CLI flag surface differs across versions. Test against at least the version T-1 detected; document the assumed flag set in <code>src/transcribe.js</code>.</li>
+</ul>
+<h3>T-3 — Wire transcription into idle rotation</h3>
+<ul>
+<li><strong>Goal:</strong> every chunk produced by <code>idle</code> gets auto-transcribed after its WAV header is finalised. Transcript text is stored either in the existing sidecar JSON (extending the schema to v2) or as a sibling <code>.txt</code> (parallel to the WAV).</li>
+<li><strong>Touches:</strong> <code>src/audioRecorder.js</code> (extend <code>_attachFinalize</code> to call into a new transcription hook), <code>src/transcribe.js</code> (already present from T-2; add a queue if needed), <code>src/chunkSidecar.js</code> (potential schema bump), tests.</li>
+<li><strong>Decision to make:</strong> sibling <code>.txt</code> vs sidecar extension. Lean toward <strong>sibling <code>.txt</code></strong> because: (1) keeps the schema-v1 sidecar untouched, (2) matches whisper.cpp&#39;s own <code>--output-txt</code> convention, (3) makes failure modes orthogonal — a missing <code>.txt</code> means &quot;transcription pending/failed&quot;, a complete sidecar means &quot;capture metadata is fine regardless&quot;. Justify the choice inline in the sprint log when the sprint runs.</li>
+<li><strong>Steps:</strong><ol>
+<li>Add a <code>transcribe: true</code> constructor option to <code>AudioRecorder</code> (default off until enabled at the CLI level).</li>
+<li>When <code>_attachFinalize</code> runs its <code>&#39;close&#39;</code> callback, if <code>transcribe</code> is on, enqueue a transcription job for the just-finalised WAV.</li>
+<li>Run jobs serially via a tiny in-memory queue so two long chunks don&#39;t compete for CPU.</li>
+<li>Write <code>&lt;chunk&gt;.txt</code> on success; emit a single-line <code>[transcribed]</code> log; on failure, leave the WAV+sidecar in place and log the error.</li>
+</ol>
+</li>
+<li><strong>Validation:</strong> <code>node src/index.js idle --name t3-demo --duration 20 --transcribe</code> produces 1–3 chunks; each chunk has a non-empty <code>.txt</code> next to the <code>.wav</code> and <code>.json</code>.</li>
+<li><strong>Acceptance criteria:</strong> for non-empty chunks, a <code>.txt</code> materialises within ~10× chunk-duration seconds of the chunk closing; for empty chunks, no <code>.txt</code> is produced (or it&#39;s an empty file, depending on the T-5 design).</li>
+<li><strong>Rollback:</strong> revert the <code>transcribe</code> flag — capture still works exactly as it does today.</li>
+<li><strong>Risk:</strong> transcription falling behind capture in a long monologue. T-5 owns the fix; T-3 just observes the behavior honestly.</li>
+</ul>
+<h3>T-4 — Per-chunk markdown persistence</h3>
+<ul>
+<li><strong>Goal:</strong> alongside each chunk produce a <code>.md</code> file that combines the transcript with the sidecar metadata in a human-reviewable form. This is the artifact a user actually opens after a meeting.</li>
+<li><strong>Touches:</strong> new <code>src/chunkMarkdown.js</code> (pure formatter: <code>(sidecar, transcript) → markdown string</code>), <code>src/audioRecorder.js</code> (write <code>.md</code> in the same finalize path after the <code>.txt</code> lands), tests in <code>tests/chunkMarkdown.test.js</code>.</li>
+<li><strong>Steps:</strong><ol>
+<li>Design a minimal markdown shape: <code># &lt;chunk timestamp&gt;</code> heading, a small key/value block for <code>durationMs</code>, <code>peakDb</code>, <code>bytes</code>, and the transcript verbatim. Cross-link to the WAV and JSON sidecar via relative paths.</li>
+<li>Make the formatter pure so the markdown shape can be unit-tested without sox/whisper.</li>
+<li>Write <code>.md</code> after <code>.txt</code>; if <code>.txt</code> is missing (transcription failed), still write a <code>.md</code> stub with the sidecar metadata and a <code>_transcription unavailable_</code> placeholder. This keeps the human-review surface complete even when transcription fails.</li>
+</ol>
+</li>
+<li><strong>Validation:</strong> open one produced <code>.md</code> in any markdown viewer; confirm the transcript and metadata are both present and readable.</li>
+<li><strong>Acceptance criteria:</strong> every WAV has a matching <code>.md</code> after the chunk closes. The <code>.md</code> is valid GFM (no broken tables, no unbalanced fences).</li>
+<li><strong>Rollback:</strong> stop writing <code>.md</code>; the JSON + WAV + TXT trio still works.</li>
+<li><strong>Risk:</strong> schema drift — if T-3 chose sidecar-extension over sibling-<code>.txt</code>, the formatter needs to read the transcript from the sidecar instead of a sibling file. Plan for both shapes in the formatter signature.</li>
+</ul>
+<h3>T-5 — Resilience: retries, skip empty, error handling</h3>
+<ul>
+<li><strong>Goal:</strong> transcription survives bad inputs and slow runs without taking the capture pipeline down. The user should be able to leave <code>idle --transcribe</code> running for an hour and not have a single failed chunk corrupt the rest of the session.</li>
+<li><strong>Touches:</strong> <code>src/transcribe.js</code> (add retry-with-backoff for transient failures), <code>src/audioRecorder.js</code> (peak gating: skip transcription entirely when <code>peak &lt; threshold</code>), tests.</li>
+<li><strong>Steps:</strong><ol>
+<li><strong>Skip-empty rule:</strong> when a chunk&#39;s sidecar <code>peak</code> is below <code>transcribeMinPeak</code> (default ~0.005, ~−46 dBFS — well above typical room hum), do not enqueue it. Write a <code>.md</code> stub with <code>_skipped: peak below threshold_</code> so the user can see the gap is intentional.</li>
+<li><strong>Retry rule:</strong> wrap each whisper.cpp invocation in a single retry on non-zero exit (one retry, no backoff — transcription is deterministic; if it fails twice it will fail forever). Log both attempts.</li>
+<li><strong>Backpressure:</strong> if the queue length exceeds N (default 5), log a warning. Optionally, on overflow, drop the oldest non-transcribed chunk&#39;s job and keep its WAV+JSON+MD-stub for later batch processing.</li>
+<li>New CLI flags: <code>--transcribe-min-peak &lt;p&gt;</code>, <code>--transcribe-queue-max &lt;n&gt;</code>.</li>
+</ol>
+</li>
+<li><strong>Validation:</strong> induce three failure modes — (a) a silent chunk (peak below threshold), (b) a corrupted WAV (truncate the data chunk), (c) a missing model — and confirm the capture pipeline keeps running with appropriate <code>.md</code> stubs.</li>
+<li><strong>Acceptance criteria:</strong> zero capture chunks are lost regardless of transcription failures. Every WAV either has a real transcript or a <code>.md</code> stub explaining why.</li>
+<li><strong>Rollback:</strong> revert the new flags; T-3/T-4 behavior persists, just less defensively.</li>
+<li><strong>Risk:</strong> the peak threshold needs tuning per environment. Make it configurable from day one (already required by the flag list) and document the tuning procedure in the sprint log.</li>
+</ul>
+<h3>T-6 — End-to-end demo: speak → see markdown update</h3>
+<ul>
+<li><strong>Goal:</strong> the milestone. The user runs one command, speaks into the mic, and watches <code>.md</code> files appear in real time as chunks rotate. This is the proof that Phase 4 produces something useful to the user&#39;s stated goal.</li>
+<li><strong>Touches:</strong> mostly documentation — <code>docs/sprint-log.md</code> records the run; <code>README.md</code> gains a &quot;Live demo&quot; section with the canonical command. Code changes only if T-1..T-5 expose any rough edges during the run.</li>
+<li><strong>Steps:</strong><ol>
+<li>Pick a model: <code>ggml-base.en.bin</code> is the default sweet spot (smaller = faster, larger = better accuracy). Verify it exists or download it first.</li>
+<li>Run <code>node src/index.js idle --name t6-demo --transcribe --threshold 0.5 --silence 2 --duration 60</code> and speak in 2–3 sentences with pauses.</li>
+<li>While it runs, observe <code>recordings/t6-demo/</code>: each silence pause should produce a WAV, then a JSON, then a TXT, then a MD within ~10 s.</li>
+<li>Open one of the <code>.md</code> files; verify the transcript is human-readable.</li>
+<li>Capture the full session output (CLI logs + directory listing + one example <code>.md</code>) in the sprint log.</li>
+</ol>
+</li>
+<li><strong>Validation:</strong> the captured session log shows at least 3 chunks transcribed end-to-end with the <code>.md</code> artifacts present. No leftover sox/whisper processes after Ctrl+C (<code>Get-Process sox</code>, <code>Get-Process whisper-cli</code> both empty).</li>
+<li><strong>Acceptance criteria:</strong> the user can read the meeting transcript directly from <code>recordings/t6-demo/*.md</code> without consulting any tool other than their text editor.</li>
+<li><strong>Rollback:</strong> none — this is documentation. If the run reveals a bug, fix it in a T-6.x patch and re-run.</li>
+<li><strong>Risk:</strong> transcription accuracy on <code>base.en</code> is not great. The user may want <code>small.en</code> or <code>medium.en</code> for real meetings; document the trade-off table in the README.</li>
+</ul>
+<hr>
+<h2>Cross-cutting checklist for every Phase 4 sprint</h2>
+<p>Same as Phase 3A:</p>
+<ol>
+<li><code>git status</code> clean before starting; pull if anything sneaks onto origin.</li>
+<li>Smallest useful diff; no unrelated refactors.</li>
+<li><code>npm test</code> and (where the sprint adds binary tooling) the new validation command both pass.</li>
+<li>Update <code>docs/sprint-log.md</code> with what / why / files / known limitations.</li>
+<li><code>npm run docs:html</code> to regenerate HTML mirrors.</li>
+<li>Atomic commit named <code>[sprint-N] &lt;concise&gt;</code> or <code>T-X: &lt;concise&gt;</code>.</li>
+<li>Push to <code>origin/develop</code> per the as-directed-push rule, after local validation.</li>
+</ol>
+<h2>Explicitly out of scope for Phase 4</h2>
+<p>These belong to later tracks:</p>
+<ul>
+<li>Local summarization (hour → day → week → quarter hierarchy)</li>
+<li>Search index over transcripts</li>
+<li>Heat/trend analysis</li>
+<li>GPU acceleration of whisper.cpp (separate sprint once the CPU baseline is honest)</li>
+<li>Rolling audio deletion after transcript persistence (a Phase 5 cleanup track)</li>
+<li>Human review UI</li>
+</ul>
+<h2>Definition of &quot;done&quot; for the Phase 4 track</h2>
+<p>The track is complete when, on this Windows machine:</p>
+<ul>
+<li><code>npm run transcribe:check</code> reports a whisper.cpp version.</li>
+<li><code>node src/index.js transcribe &lt;wav&gt;</code> produces a non-empty transcript for a non-silent WAV.</li>
+<li><code>node src/index.js idle --name &lt;label&gt; --transcribe --duration &lt;seconds&gt;</code> produces, for each non-silent chunk, a <code>.wav</code>, <code>.json</code>, <code>.txt</code>, and <code>.md</code> quartet in <code>./recordings/&lt;label&gt;/</code>.</li>
+<li>Silent / sub-threshold chunks produce a <code>.md</code> stub explaining why they were skipped, instead of leaving the user wondering.</li>
+<li><code>npm test</code> is green and asserts the new transcription invariants (probe shape, formatter output, skip-empty rule).</li>
+</ul>
 
 </body>
 </html>

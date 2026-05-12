@@ -29,7 +29,8 @@ A local-first AI memory and workflow assistant that records audio, transcribes i
 2. Run `npm install` to install dependencies.
 3. Install **sox** — required for audio capture (see Audio Capture Prerequisites below).
 4. Run `npm run audio:check` to verify sox is callable from this project.
-5. See individual modules for usage.
+5. (Optional, for upcoming transcription) install **whisper.cpp** and run `npm run transcribe:check`. See Transcription Prerequisites below; not yet required by the CLI.
+6. See individual modules for usage.
 
 ## Audio Capture Prerequisites
 
@@ -63,6 +64,43 @@ brew install sox
 sudo apt install sox       # Debian/Ubuntu
 sudo dnf install sox       # Fedora
 sudo pacman -S sox         # Arch
+```
+
+## Transcription Prerequisites
+
+> Status: **upcoming — not yet required by the CLI.** Phase 4 (the transcription track, starting with T-1) needs a [whisper.cpp](https://github.com/ggerganov/whisper.cpp) CLI on `PATH`. The probe is wired in early so you can install ahead of time without surprises.
+
+Quick verification:
+
+```bash
+npm run transcribe:check
+```
+
+The probe tries three binary names in order (`whisper-cli`, `whisper`, `main`) and prints the resolved path + version on success, or platform-specific install hints + a non-zero exit on failure.
+
+### Windows
+
+There is no winget package for whisper.cpp yet. Install via the GitHub releases:
+
+1. Download a release ZIP from <https://github.com/ggerganov/whisper.cpp/releases>.
+2. Extract it (for example to `C:\Tools\whisper.cpp\`).
+3. Add the folder containing `whisper-cli.exe` to your user or system `PATH`.
+4. Open a new shell so the change takes effect.
+
+### macOS
+
+```bash
+brew install whisper-cpp   # Homebrew exposes the binary as `whisper-cli`
+```
+
+### Linux
+
+Some distributions ship a `whisper.cpp` package; check your package manager first. Otherwise build from source:
+
+```bash
+git clone https://github.com/ggerganov/whisper.cpp
+cd whisper.cpp && make
+# Put the built `whisper-cli` (or `main`, on older releases) on your PATH.
 ```
 
 ## Usage

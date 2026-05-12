@@ -509,6 +509,56 @@
 </li>
 <li>Why: the user&#39;s mental model is &quot;I want a folder per meeting, and I want unattended captures to stop themselves&quot;. MS-10 makes both of those one-flag operations. Combined with MS-9&#39;s tuning knobs, the CLI is now ergonomic enough for the &quot;leave it running for an hour while I&#39;m in a meeting&quot; use case the user asked for explicitly — the canonical command is now <code>node src/index.js idle --name meeting --duration 3600 --threshold 0.5 --silence 20</code></li>
 </ul>
+<h2>Sprint 22 (T-1): Whisper.cpp Dependency Probe (Completed)</h2>
+<ul>
+<li>Opens Phase 4 (transcription track). Same shape as MS-1&#39;s sox probe, but for whisper.cpp — Phase 4 will spawn a whisper.cpp CLI per chunk, and &quot;binary missing from PATH&quot; is the single most likely first-run failure mode. Detecting it now, with a friendly install message, keeps T-2..T-6 from re-discovering the same problem in opaque ways</li>
+<li>Added <code>tools/check-transcribe-deps.js</code>: probes for a whisper.cpp CLI on <code>PATH</code> by trying three candidate names in order (<code>whisper-cli</code> → <code>whisper</code> → <code>main</code>) with <code>--help</code> as the cheapest &quot;is it callable&quot; smoke. The first candidate that spawns and exits 0 wins. ENOENT on a candidate moves on to the next; any other failure is preserved in the diagnostics</li>
+<li>Added <code>npm run transcribe:check</code> script in <code>package.json</code>, parallel to the existing <code>audio:check</code></li>
+<li>Extracted three pure helpers so the probe&#39;s logic is testable without spawning anything:<ul>
+<li><code>parseWhisperHelp(text)</code> — scans the first 8 non-empty lines of <code>--help</code> output for a banner that mentions &quot;whisper&quot; and a semver-ish token. Degrades gracefully (returns <code>null</code>) when whisper.cpp&#39;s future help text doesn&#39;t match the banner heuristic, so <code>main()</code> can fall back to &quot;version unknown&quot; instead of crashing</li>
+<li><code>pickCandidateBinary(candidates, probe)</code> — generic &quot;try each in order, stop at the first ok, retain attempts for diagnostics&quot; walker. Used in main() with <code>probeBinary</code> as the <code>probe</code> argument; tests inject fakes</li>
+<li><code>findOnPath(command, env)</code> — locates the resolved on-disk path by walking <code>env.PATH</code> and (on Windows) appending each <code>PATHEXT</code> entry; returns <code>null</code> when nothing matches. Used purely for diagnostic output; the spawn already resolved it</li>
+</ul>
+</li>
+<li>Per-platform install hints in <code>printInstallHints()</code>:<ul>
+<li><strong>Windows:</strong> download the release ZIP from <a href="https://github.com/ggerganov/whisper.cpp/releases">https://github.com/ggerganov/whisper.cpp/releases</a>, extract, add the folder containing <code>whisper-cli.exe</code> to <code>PATH</code>, restart the shell. Explicitly notes that winget does not yet ship a whisper.cpp package</li>
+<li><strong>macOS:</strong> <code>brew install whisper-cpp</code> (Homebrew formula; exposes the binary as <code>whisper-cli</code>)</li>
+<li><strong>Linux:</strong> check distro packages first; otherwise <code>git clone … &amp;&amp; make</code>, put <code>whisper-cli</code>/<code>main</code> on <code>PATH</code></li>
+</ul>
+</li>
+<li>Files added: <code>tools/check-transcribe-deps.js</code>, <code>tests/checkTranscribeDeps.test.js</code></li>
+<li>Files modified: <code>package.json</code>, <code>README.md</code>, <code>docs/sprint-log.md</code>, <code>docs/sprint-plan.md</code>, regenerated HTML mirrors</li>
+<li>Validation:<ul>
+<li><code>node --check tools/check-transcribe-deps.js</code> clean</li>
+<li><code>npm test</code> — 137/137 passing across 11 suites (119 → 137 with 18 new tests across <code>WHISPER_CANDIDATES</code>, <code>parseWhisperHelp</code> (7), <code>pickCandidateBinary</code> (4), <code>findOnPath</code> (4), and <code>printInstallHints</code> (2))</li>
+<li>Ran <code>node tools/check-transcribe-deps.js</code> on this machine (FAIL path, since whisper.cpp is not installed). Exit 1, output:<pre><code>FAIL: no whisper.cpp CLI found on PATH.
+
+LocalRecorder needs a whisper.cpp CLI on PATH for transcription.
+Tried (in order): whisper-cli, whisper, main.
+
+Windows install:
+  1. Download a release ZIP from https://github.com/ggerganov/whisper.cpp/releases
+  2. Extract it (e.g. C:\Tools\whisper.cpp\).
+  3. Add the folder containing whisper-cli.exe to your user or system PATH.
+  4. Open a NEW shell so PATH refreshes.
+
+Note: winget does not yet ship a whisper.cpp package; use the GitHub releases.
+
+Then re-run: npm run transcribe:check
+</code></pre>
+</li>
+<li>OK path not exercised on hardware (whisper.cpp not installed here) but covered by the unit tests for <code>pickCandidateBinary</code> (fake probe returns <code>ok: true</code>) and <code>parseWhisperHelp</code> (real whisper banner strings)</li>
+</ul>
+</li>
+<li>Known limitations:<ul>
+<li><strong>No model probe yet.</strong> whisper.cpp also needs a <code>.bin</code> model file (e.g. <code>ggml-base.en.bin</code>); T-2 will introduce a separate model check (or fold one in here) once the transcription invocation actually consumes a model</li>
+<li><strong>Probe trusts <code>--help</code> exit status.</strong> If a future whisper.cpp release ships <code>--help</code> returning a non-zero exit (very unlikely), the probe would report FAIL even when the binary is otherwise functional. The diagnostic block surfaces the exit status so the user can spot this case</li>
+<li><strong><code>findOnPath</code> is best-effort and informational.</strong> If the OS resolves the executable via PATHEXT in a way <code>findOnPath</code> doesn&#39;t replicate exactly, the OK path still works — the resolved-path line just reads <code>(unknown — found via PATH but could not be located on disk)</code></li>
+<li><strong>Diagnostic format may need a small tweak when the OK path is first exercised.</strong> Lacking an actual whisper.cpp install on this machine, the banner-line layout is a best-guess from public whisper.cpp release notes; T-2&#39;s first real install will validate it and any iteration is one-line</li>
+</ul>
+</li>
+<li>Why: Phase 4 starts with &quot;does the binary exist?&quot;. Getting that question answered cleanly, with a friendly install path per platform, costs one tiny sprint and removes a footgun that would otherwise show up at the worst possible time — namely, the first time the user runs <code>node src/index.js transcribe &lt;file&gt;</code> in T-2 and sees an opaque ENOENT mid-stream</li>
+</ul>
 
 </body>
 </html>

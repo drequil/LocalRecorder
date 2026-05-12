@@ -382,3 +382,45 @@ Next: MS-1 — sox dependency probe. After that the track proceeds linearly thro
   - **Record-mode sidecar uses the same schema as idle.** Fields like `start` and `end` for record mode are the recorder's wall-clock start/stop, not just the wav duration. `durationMs` is still audio-derived. Acceptable; future schema v2 (if needed) could split "trigger source" into the schema to disambiguate "rotation by silence" vs "rotation by duration timer" vs "rotation by Ctrl+C"
   - **Shutdown grace is now 250 ms.** Adds a perceptible pause when stopping a short recording. The alternative was making `recorder.stop()` async-aware (it already returns synchronously after dispatching `end`); kept the simpler approach until profiling says otherwise
 - Why: the user's mental model is "I want a folder per meeting, and I want unattended captures to stop themselves". MS-10 makes both of those one-flag operations. Combined with MS-9's tuning knobs, the CLI is now ergonomic enough for the "leave it running for an hour while I'm in a meeting" use case the user asked for explicitly — the canonical command is now `node src/index.js idle --name meeting --duration 3600 --threshold 0.5 --silence 20`
+
+## Sprint 22 (T-1): Whisper.cpp Dependency Probe (Completed)
+- Opens Phase 4 (transcription track). Same shape as MS-1's sox probe, but for whisper.cpp — Phase 4 will spawn a whisper.cpp CLI per chunk, and "binary missing from PATH" is the single most likely first-run failure mode. Detecting it now, with a friendly install message, keeps T-2..T-6 from re-discovering the same problem in opaque ways
+- Added `tools/check-transcribe-deps.js`: probes for a whisper.cpp CLI on `PATH` by trying three candidate names in order (`whisper-cli` → `whisper` → `main`) with `--help` as the cheapest "is it callable" smoke. The first candidate that spawns and exits 0 wins. ENOENT on a candidate moves on to the next; any other failure is preserved in the diagnostics
+- Added `npm run transcribe:check` script in `package.json`, parallel to the existing `audio:check`
+- Extracted three pure helpers so the probe's logic is testable without spawning anything:
+  - `parseWhisperHelp(text)` — scans the first 8 non-empty lines of `--help` output for a banner that mentions "whisper" and a semver-ish token. Degrades gracefully (returns `null`) when whisper.cpp's future help text doesn't match the banner heuristic, so `main()` can fall back to "version unknown" instead of crashing
+  - `pickCandidateBinary(candidates, probe)` — generic "try each in order, stop at the first ok, retain attempts for diagnostics" walker. Used in main() with `probeBinary` as the `probe` argument; tests inject fakes
+  - `findOnPath(command, env)` — locates the resolved on-disk path by walking `env.PATH` and (on Windows) appending each `PATHEXT` entry; returns `null` when nothing matches. Used purely for diagnostic output; the spawn already resolved it
+- Per-platform install hints in `printInstallHints()`:
+  - **Windows:** download the release ZIP from <https://github.com/ggerganov/whisper.cpp/releases>, extract, add the folder containing `whisper-cli.exe` to `PATH`, restart the shell. Explicitly notes that winget does not yet ship a whisper.cpp package
+  - **macOS:** `brew install whisper-cpp` (Homebrew formula; exposes the binary as `whisper-cli`)
+  - **Linux:** check distro packages first; otherwise `git clone … && make`, put `whisper-cli`/`main` on `PATH`
+- Files added: `tools/check-transcribe-deps.js`, `tests/checkTranscribeDeps.test.js`
+- Files modified: `package.json`, `README.md`, `docs/sprint-log.md`, `docs/sprint-plan.md`, regenerated HTML mirrors
+- Validation:
+  - `node --check tools/check-transcribe-deps.js` clean
+  - `npm test` — 137/137 passing across 11 suites (119 → 137 with 18 new tests across `WHISPER_CANDIDATES`, `parseWhisperHelp` (7), `pickCandidateBinary` (4), `findOnPath` (4), and `printInstallHints` (2))
+  - Ran `node tools/check-transcribe-deps.js` on this machine (FAIL path, since whisper.cpp is not installed). Exit 1, output:
+    ```
+    FAIL: no whisper.cpp CLI found on PATH.
+
+    LocalRecorder needs a whisper.cpp CLI on PATH for transcription.
+    Tried (in order): whisper-cli, whisper, main.
+
+    Windows install:
+      1. Download a release ZIP from https://github.com/ggerganov/whisper.cpp/releases
+      2. Extract it (e.g. C:\Tools\whisper.cpp\).
+      3. Add the folder containing whisper-cli.exe to your user or system PATH.
+      4. Open a NEW shell so PATH refreshes.
+
+    Note: winget does not yet ship a whisper.cpp package; use the GitHub releases.
+
+    Then re-run: npm run transcribe:check
+    ```
+  - OK path not exercised on hardware (whisper.cpp not installed here) but covered by the unit tests for `pickCandidateBinary` (fake probe returns `ok: true`) and `parseWhisperHelp` (real whisper banner strings)
+- Known limitations:
+  - **No model probe yet.** whisper.cpp also needs a `.bin` model file (e.g. `ggml-base.en.bin`); T-2 will introduce a separate model check (or fold one in here) once the transcription invocation actually consumes a model
+  - **Probe trusts `--help` exit status.** If a future whisper.cpp release ships `--help` returning a non-zero exit (very unlikely), the probe would report FAIL even when the binary is otherwise functional. The diagnostic block surfaces the exit status so the user can spot this case
+  - **`findOnPath` is best-effort and informational.** If the OS resolves the executable via PATHEXT in a way `findOnPath` doesn't replicate exactly, the OK path still works — the resolved-path line just reads `(unknown — found via PATH but could not be located on disk)`
+  - **Diagnostic format may need a small tweak when the OK path is first exercised.** Lacking an actual whisper.cpp install on this machine, the banner-line layout is a best-guess from public whisper.cpp release notes; T-2's first real install will validate it and any iteration is one-line
+- Why: Phase 4 starts with "does the binary exist?". Getting that question answered cleanly, with a friendly install path per platform, costs one tiny sprint and removes a footgun that would otherwise show up at the worst possible time — namely, the first time the user runs `node src/index.js transcribe <file>` in T-2 and sees an opaque ENOENT mid-stream
