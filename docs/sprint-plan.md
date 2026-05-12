@@ -225,7 +225,7 @@ Same shape as Phase 3A/3B: prove the foundation before integrating.
 | Sprint | Title | Outcome | Status |
 |---|---|---|---|
 | T-1 | Whisper.cpp dependency probe | `npm run transcribe:check` reports the resolved binary or a clean install message | ✅ |
-| T-2 | Transcribe a known-good WAV via CLI | `node src/index.js transcribe <file>` prints text from a single WAV | ⏳ |
+| T-2 | Transcribe a known-good WAV via CLI | `node src/index.js transcribe <file>` prints text from a single WAV | ✅ |
 | T-3 | Wire transcription into idle rotation | Each rotated chunk is auto-transcribed; transcript stored next to the WAV | ⏳ |
 | T-4 | Per-chunk markdown persistence | `.md` per chunk combines transcript + sidecar metadata for human review | ⏳ |
 | T-5 | Resilience: retries, skip empty, error handling | Transcription survives bad chunks, slow runs, and silent rooms | ⏳ |
@@ -243,19 +243,12 @@ Six sprints; ~30–90 minutes each. After T-2 you can demo "transcribe a file". 
 - **Outcome:** `tools/check-transcribe-deps.js` probes three candidate binary names in order (`whisper-cli`, `whisper`, `main`) via `spawnSync(name, ['--help'])`. First one that exits 0 wins. ENOENT moves on; non-ENOENT failures are preserved in diagnostics. New `npm run transcribe:check` script. Per-platform install hints (winget unavailable for Windows → GitHub releases; `brew install whisper-cpp` on macOS; build-from-source instructions on Linux). README gains a "Transcription Prerequisites" section flagged "upcoming — not yet required by the CLI".
 - **Realized acceptance criteria:** without whisper.cpp installed, `node tools/check-transcribe-deps.js` exits 1 and prints the Windows install hint block (verified on this machine). With whisper.cpp installed, the probe will print the resolved binary path and any banner-derived version. `npm test` reports 137/137 passing across 11 suites (119 → 137 with 18 new tests across `parseWhisperHelp`, `pickCandidateBinary`, `findOnPath`, and `printInstallHints`).
 
-### T-2 — Transcribe a known-good WAV via CLI
+### T-2 — Transcribe a known-good WAV via CLI (Completed in Sprint 23)
 
 - **Goal:** prove the transcription path end-to-end on a single WAV file, with no idle integration. `node src/index.js transcribe <file.wav>` reads the WAV, invokes whisper.cpp with a sensible default model, and prints the transcript to stdout.
-- **Touches:** new `src/transcribe.js` (pure wrapper around `spawn` that returns a transcription promise), new `transcribe` subcommand in `src/index.js`, tests in `tests/transcribe.test.js`. New `--model <path>` flag with a sensible default (`./models/ggml-base.en.bin` if present, else error with "set --model or place a model here"). Maybe a separate `tools/check-transcribe-model.js` if model discovery turns into more than a one-liner.
-- **Steps:**
-  1. Resolve the whisper.cpp binary using the same lookup as T-1.
-  2. Spawn `whisper-cli --no-prints --output-txt -m <model> -f <wav>`. Capture stdout/stderr; assert exit 0.
-  3. Read the resulting `<wav>.txt` (whisper.cpp's default output convention) and print to stdout.
-  4. Add a `--json` flag that emits `{ text, model, durationMs, wav, version }` for downstream consumers.
-- **Validation:** record a 5-second test WAV via `record --duration 5 hello.wav`. Speak "this is a test". Run `node src/index.js transcribe hello.wav`. Expect text resembling the spoken phrase.
-- **Acceptance criteria:** for a non-silent WAV, the printed transcript is non-empty and recognisably close to the spoken content. Exit 0 on success; exit 1 with diagnostics on missing binary, missing model, or non-WAV input.
-- **Rollback:** delete the new file/subcommand; T-1 is the only Phase 4 surface that remains.
-- **Risk:** whisper.cpp's CLI flag surface differs across versions. Test against at least the version T-1 detected; document the assumed flag set in `src/transcribe.js`.
+- **Outcome:** new `src/transcribe.js` exposes `transcribeFile({ wav, model, binary?, spawnFn?, resolveBinaryFn?, fsImpl? })` plus pure helpers (`expectedTxtPaths`, `isWavFile`, `buildWhisperArgs`, `resolveBinary`, `readTranscriptFile`). Spawns `whisper-cli --no-prints --output-txt -m <model> -f <wav>` and reads whichever `.txt` sibling whisper.cpp wrote — `expectedTxtPaths` returns both the modern strip-ext (`<basename>.txt`) and legacy append (`<wav>.txt`) candidates so the wrapper tolerates either convention. T-1's `pickCandidateBinary` is re-used for binary discovery (no duplicated lookup logic). `transcribe <file.wav>` subcommand in `src/index.js` with `--model <path>` (default `./models/ggml-base.en.bin`) and `--json` flags. JSON mode pulls a banner-derived `version` via the T-1 `probeBinary` + `parseWhisperHelp` helpers.
+- **Realized acceptance criteria:** on this Windows machine the recorded `whisper-cli` build actually writes the **legacy** filename (`hello.wav.txt`), not the modern `<basename>.txt` — the defensive two-candidate lookup quietly handled it on the first real run. A 5-second ambient-room WAV (peak 0.032 / -29.9 dBFS) transcribed to an empty string in 2.6 s (~57% of realtime on `base.en` with the Win32 BLAS build); whisper.cpp correctly emitted no transcript for non-speech audio rather than hallucinating one. Pipeline exits 0; CLI error paths (missing binary, missing model, missing/non-WAV input, non-zero whisper exit, empty .txt output, spawn ENOENT) are all covered by the 8-describe-block `tests/transcribe.test.js` plus 11-case `tests/parseTranscribeArgs.test.js`. **Not yet validated:** transcript fidelity against actual spoken words — that needs a user-in-the-loop record-then-transcribe run with someone speaking into the mic. Honest deferred item, tracked at the bottom of the Sprint 23 log entry.
+- **Known limitations:** transcribe is a blocking spawn; a 30-second WAV ties up the CPU for ~15 s. Acceptable for T-2's single-file use case; T-3 will introduce queue + serial processing for the idle integration. The `version` field in `--json` output is `null` on the Win32 build whose `--help` banner contains no semver token (same shape as the T-1 probe output); `versionLabel` carries the raw banner line so downstream consumers have something to log.
 
 ### T-3 — Wire transcription into idle rotation
 

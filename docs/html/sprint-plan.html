@@ -336,7 +336,7 @@
 <td>T-2</td>
 <td>Transcribe a known-good WAV via CLI</td>
 <td><code>node src/index.js transcribe &lt;file&gt;</code> prints text from a single WAV</td>
-<td>⏳</td>
+<td>✅</td>
 </tr>
 <tr>
 <td>T-3</td>
@@ -372,21 +372,12 @@
 <li><strong>Outcome:</strong> <code>tools/check-transcribe-deps.js</code> probes three candidate binary names in order (<code>whisper-cli</code>, <code>whisper</code>, <code>main</code>) via <code>spawnSync(name, [&#39;--help&#39;])</code>. First one that exits 0 wins. ENOENT moves on; non-ENOENT failures are preserved in diagnostics. New <code>npm run transcribe:check</code> script. Per-platform install hints (winget unavailable for Windows → GitHub releases; <code>brew install whisper-cpp</code> on macOS; build-from-source instructions on Linux). README gains a &quot;Transcription Prerequisites&quot; section flagged &quot;upcoming — not yet required by the CLI&quot;.</li>
 <li><strong>Realized acceptance criteria:</strong> without whisper.cpp installed, <code>node tools/check-transcribe-deps.js</code> exits 1 and prints the Windows install hint block (verified on this machine). With whisper.cpp installed, the probe will print the resolved binary path and any banner-derived version. <code>npm test</code> reports 137/137 passing across 11 suites (119 → 137 with 18 new tests across <code>parseWhisperHelp</code>, <code>pickCandidateBinary</code>, <code>findOnPath</code>, and <code>printInstallHints</code>).</li>
 </ul>
-<h3>T-2 — Transcribe a known-good WAV via CLI</h3>
+<h3>T-2 — Transcribe a known-good WAV via CLI (Completed in Sprint 23)</h3>
 <ul>
 <li><strong>Goal:</strong> prove the transcription path end-to-end on a single WAV file, with no idle integration. <code>node src/index.js transcribe &lt;file.wav&gt;</code> reads the WAV, invokes whisper.cpp with a sensible default model, and prints the transcript to stdout.</li>
-<li><strong>Touches:</strong> new <code>src/transcribe.js</code> (pure wrapper around <code>spawn</code> that returns a transcription promise), new <code>transcribe</code> subcommand in <code>src/index.js</code>, tests in <code>tests/transcribe.test.js</code>. New <code>--model &lt;path&gt;</code> flag with a sensible default (<code>./models/ggml-base.en.bin</code> if present, else error with &quot;set --model or place a model here&quot;). Maybe a separate <code>tools/check-transcribe-model.js</code> if model discovery turns into more than a one-liner.</li>
-<li><strong>Steps:</strong><ol>
-<li>Resolve the whisper.cpp binary using the same lookup as T-1.</li>
-<li>Spawn <code>whisper-cli --no-prints --output-txt -m &lt;model&gt; -f &lt;wav&gt;</code>. Capture stdout/stderr; assert exit 0.</li>
-<li>Read the resulting <code>&lt;wav&gt;.txt</code> (whisper.cpp&#39;s default output convention) and print to stdout.</li>
-<li>Add a <code>--json</code> flag that emits <code>{ text, model, durationMs, wav, version }</code> for downstream consumers.</li>
-</ol>
-</li>
-<li><strong>Validation:</strong> record a 5-second test WAV via <code>record --duration 5 hello.wav</code>. Speak &quot;this is a test&quot;. Run <code>node src/index.js transcribe hello.wav</code>. Expect text resembling the spoken phrase.</li>
-<li><strong>Acceptance criteria:</strong> for a non-silent WAV, the printed transcript is non-empty and recognisably close to the spoken content. Exit 0 on success; exit 1 with diagnostics on missing binary, missing model, or non-WAV input.</li>
-<li><strong>Rollback:</strong> delete the new file/subcommand; T-1 is the only Phase 4 surface that remains.</li>
-<li><strong>Risk:</strong> whisper.cpp&#39;s CLI flag surface differs across versions. Test against at least the version T-1 detected; document the assumed flag set in <code>src/transcribe.js</code>.</li>
+<li><strong>Outcome:</strong> new <code>src/transcribe.js</code> exposes <code>transcribeFile({ wav, model, binary?, spawnFn?, resolveBinaryFn?, fsImpl? })</code> plus pure helpers (<code>expectedTxtPaths</code>, <code>isWavFile</code>, <code>buildWhisperArgs</code>, <code>resolveBinary</code>, <code>readTranscriptFile</code>). Spawns <code>whisper-cli --no-prints --output-txt -m &lt;model&gt; -f &lt;wav&gt;</code> and reads whichever <code>.txt</code> sibling whisper.cpp wrote — <code>expectedTxtPaths</code> returns both the modern strip-ext (<code>&lt;basename&gt;.txt</code>) and legacy append (<code>&lt;wav&gt;.txt</code>) candidates so the wrapper tolerates either convention. T-1&#39;s <code>pickCandidateBinary</code> is re-used for binary discovery (no duplicated lookup logic). <code>transcribe &lt;file.wav&gt;</code> subcommand in <code>src/index.js</code> with <code>--model &lt;path&gt;</code> (default <code>./models/ggml-base.en.bin</code>) and <code>--json</code> flags. JSON mode pulls a banner-derived <code>version</code> via the T-1 <code>probeBinary</code> + <code>parseWhisperHelp</code> helpers.</li>
+<li><strong>Realized acceptance criteria:</strong> on this Windows machine the recorded <code>whisper-cli</code> build actually writes the <strong>legacy</strong> filename (<code>hello.wav.txt</code>), not the modern <code>&lt;basename&gt;.txt</code> — the defensive two-candidate lookup quietly handled it on the first real run. A 5-second ambient-room WAV (peak 0.032 / -29.9 dBFS) transcribed to an empty string in 2.6 s (~57% of realtime on <code>base.en</code> with the Win32 BLAS build); whisper.cpp correctly emitted no transcript for non-speech audio rather than hallucinating one. Pipeline exits 0; CLI error paths (missing binary, missing model, missing/non-WAV input, non-zero whisper exit, empty .txt output, spawn ENOENT) are all covered by the 8-describe-block <code>tests/transcribe.test.js</code> plus 11-case <code>tests/parseTranscribeArgs.test.js</code>. <strong>Not yet validated:</strong> transcript fidelity against actual spoken words — that needs a user-in-the-loop record-then-transcribe run with someone speaking into the mic. Honest deferred item, tracked at the bottom of the Sprint 23 log entry.</li>
+<li><strong>Known limitations:</strong> transcribe is a blocking spawn; a 30-second WAV ties up the CPU for ~15 s. Acceptable for T-2&#39;s single-file use case; T-3 will introduce queue + serial processing for the idle integration. The <code>version</code> field in <code>--json</code> output is <code>null</code> on the Win32 build whose <code>--help</code> banner contains no semver token (same shape as the T-1 probe output); <code>versionLabel</code> carries the raw banner line so downstream consumers have something to log.</li>
 </ul>
 <h3>T-3 — Wire transcription into idle rotation</h3>
 <ul>

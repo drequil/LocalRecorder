@@ -29,8 +29,9 @@ A local-first AI memory and workflow assistant that records audio, transcribes i
 2. Run `npm install` to install dependencies.
 3. Install **sox** — required for audio capture (see Audio Capture Prerequisites below).
 4. Run `npm run audio:check` to verify sox is callable from this project.
-5. (Optional, for upcoming transcription) install **whisper.cpp** and run `npm run transcribe:check`. See Transcription Prerequisites below; not yet required by the CLI.
-6. See individual modules for usage.
+5. Install **whisper.cpp** if you plan to use the `transcribe` subcommand (or any later Phase 4+ feature). Run `npm run transcribe:check` to verify. See Transcription Prerequisites below.
+6. Download at least one ggml model (e.g. `ggml-base.en.bin`) into `./models/` before running `transcribe`. See the Transcription Prerequisites section for the link.
+7. See individual modules for usage.
 
 ## Audio Capture Prerequisites
 
@@ -68,7 +69,7 @@ sudo pacman -S sox         # Arch
 
 ## Transcription Prerequisites
 
-> Status: **upcoming — not yet required by the CLI.** Phase 4 (the transcription track, starting with T-1) needs a [whisper.cpp](https://github.com/ggerganov/whisper.cpp) CLI on `PATH`. The probe is wired in early so you can install ahead of time without surprises.
+> Required for the `transcribe` subcommand (and Phase 4+ features). [whisper.cpp](https://github.com/ggerganov/whisper.cpp) ships a CLI binary that LocalRecorder shells out to per WAV.
 
 Quick verification:
 
@@ -77,6 +78,15 @@ npm run transcribe:check
 ```
 
 The probe tries three binary names in order (`whisper-cli`, `whisper`, `main`) and prints the resolved path + version on success, or platform-specific install hints + a non-zero exit on failure.
+
+### Model file
+
+In addition to the binary, whisper.cpp needs a ggml model file. Download one (or more) into `./models/`:
+
+- `ggml-base.en.bin` (~141 MB) — sensible default; fast on CPU, English-only. <https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin>
+- Other sizes (`tiny.en`, `small.en`, `medium.en`, `large-v3`) are listed at <https://huggingface.co/ggerganov/whisper.cpp/tree/main> — bigger = more accurate but slower and more RAM.
+
+If you store models elsewhere, pass the path via `--model <path>`.
 
 ### Windows
 
@@ -120,6 +130,10 @@ node src/index.js record [<out.wav>] [--name <label>] [--root <dir>] [--duration
 node src/index.js idle [<directory>] [--name <label>] [--root <dir>] [--duration N]
                       [--threshold P] [--silence N] [--device <id>] [--max-chunk-seconds N]
 # Per-silence WAV chunks plus JSON sidecars into a structured session directory.
+
+node src/index.js transcribe <file.wav> [--model <path>] [--json]
+# Transcribe one WAV via whisper.cpp. Prints the transcript text (or a JSON
+# payload with --json). Requires whisper.cpp on PATH and a ggml model file.
 ```
 
 ### Output layout
@@ -148,6 +162,8 @@ By default both `record` and `idle` write under `./recordings/`, into a session 
 | `--threshold P` | idle | percent (0..100) | Silence detection threshold. Default `0.5`. Lower = more sensitive. |
 | `--silence N` | idle | seconds | Silence duration before a chunk rotates. Default `1.0`. |
 | `--max-chunk-seconds N` | idle | seconds | Force-rotate after N seconds even if the user is still talking. Off by default. |
+| `--model <path>` | transcribe | path | Path to a whisper.cpp ggml model. Default: `./models/ggml-base.en.bin`. |
+| `--json` | transcribe | flag | Emit a JSON payload (`{ text, model, wav, durationMs, binary, txtPath, version, versionLabel }`) instead of plain text. |
 
 ### Sidecar JSON
 
@@ -160,6 +176,18 @@ node src/index.js idle --name meeting --duration 3600 --threshold 0.5 --silence 
 ```
 
 That records up to 1 hour of meeting audio into `recordings/meeting/`, rotating to a new WAV+JSON pair every time you go silent for 20 s. Ambient noise below ~0.5% peak is filtered out.
+
+### Example — record and transcribe one WAV
+
+```bash
+node src/index.js record hello.wav --duration 5
+# (speak "this is a test" into the mic)
+
+node src/index.js transcribe hello.wav
+# this is a test
+```
+
+Whisper.cpp writes a sibling `.txt` next to the input WAV (current builds use `<wav>.txt`; older builds used `<basename>.txt`). LocalRecorder tolerates either convention and prints the resulting text. With `--json` the same call emits a structured payload including the resolved binary, model path, and processing time. Per-chunk auto-transcription during `idle` mode is a later sprint (T-3); for now, run `transcribe` on individual files.
 
 ## Development
 

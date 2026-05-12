@@ -4,6 +4,12 @@ const AudioRecorder = require('./audioRecorder');
 const { enumerateDevices } = require('./audioDevices');
 const { peak16LE, toDb, renderBar } = require('./audioLevels');
 const { resolveRecordPath, resolveIdleDirectory } = require('./recordingPaths');
+const {
+  DEFAULT_MODEL_PATH,
+  transcribeFile,
+  resolveBinary,
+} = require('./transcribe');
+const { probeBinary, parseWhisperHelp } = require('../tools/check-transcribe-deps');
 
 // Minimal subcommand flag parser. flagSpec maps `--flag-name` to a descriptor
 // {type, as}. Supports `--flag value` and `--flag=value` shapes; rejects unknown
@@ -52,6 +58,15 @@ function parseSubcommandArgs(args, flagSpec) {
     if (a.startsWith('--')) {
       const spec = flagSpec[a];
       if (!spec) return { error: `unknown flag: ${a}` };
+      // Boolean presence flag (no value, e.g. --json). Reject `--flag=value` shorthand
+      // so we don't silently accept `--json=foo`; bare `--flag` is the only valid form.
+      if (spec.type === 'flag') {
+        if (inlineValue !== null) {
+          return { error: `${a} does not take a value (got ${JSON.stringify(inlineValue)})` };
+        }
+        flags[spec.as] = true;
+        continue;
+      }
       let raw = inlineValue;
       if (raw === null) {
         raw = args[i + 1];
@@ -91,6 +106,11 @@ const LISTEN_FLAGS = {
   '--device': { type: 'string', as: 'device' },
 };
 
+const TRANSCRIBE_FLAGS = {
+  '--model': { type: 'string', as: 'model' },
+  '--json': { type: 'flag', as: 'json' },
+};
+
 function printHelp() {
   console.log('LocalRecorder v0.1.0');
   console.log('');
@@ -102,6 +122,7 @@ function printHelp() {
   console.log('  idle     [<directory>] [--name <label>] [--root <dir>] Per-silence WAV chunks + JSON sidecars');
   console.log('           [--threshold P] [--silence N] [--device <id>]');
   console.log('           [--duration N] [--max-chunk-seconds N]');
+  console.log('  transcribe <file.wav> [--model <path>] [--json]        Transcribe one WAV via whisper.cpp CLI');
   console.log('  help                                                   Show this help');
   console.log('');
   console.log('Output layout:');
@@ -118,6 +139,8 @@ function printHelp() {
   console.log('  --silence N             Silence duration before rotation in seconds (positive; default 1.0)');
   console.log('  --device <id>           Audio input device id (Windows waveaudio index; default 0)');
   console.log('  --max-chunk-seconds N   Force-rotate a chunk after N seconds even without silence');
+  console.log('  --model <path>          Whisper.cpp ggml model path (default ./models/ggml-base.en.bin)');
+  console.log('  --json                  Emit transcribe result as JSON instead of plain text');
 }
 
 function parseRecordArgs(args) {
@@ -158,6 +181,19 @@ function parseListenArgs(args) {
   if (positional.length > 0) return { error: `unexpected extra argument: ${positional[0]}` };
   return {
     device: flags.device != null ? flags.device : null,
+  };
+}
+
+function parseTranscribeArgs(args) {
+  const parsed = parseSubcommandArgs(args, TRANSCRIBE_FLAGS);
+  if (parsed.error) return { error: parsed.error };
+  const { flags, positional } = parsed;
+  if (positional.length === 0) return { error: 'transcribe requires a <file.wav> positional argument' };
+  if (positional.length > 1) return { error: `unexpected extra argument: ${positional[1]}` };
+  return {
+    wav: positional[0],
+    model: flags.model != null ? flags.model : null,
+    json: flags.json === true,
   };
 }
 
@@ -210,6 +246,58 @@ function runListen(args = []) {
   return 0;
 }
 
+// Helper: ask whisper.cpp for its banner so the --json output can include a `version`
+// field per T-2's spec. Best-effort; on failure we return null and the caller emits
+// version: null.
+function getBinaryVersionInfo(binaryName) {
+  try {
+    const probe = probeBinary(binaryName);
+    if (!probe || !probe.ok) return null;
+    return parseWhisperHelp(probe.stdout || probe.stderr || '');
+  } catch (_) {
+    return null;
+  }
+}
+
+async function runTranscribe(args = []) {
+  const parsed = parseTranscribeArgs(args);
+  if (parsed.error) {
+    console.error(`Error: ${parsed.error}`);
+    return 1;
+  }
+  const model = parsed.model || DEFAULT_MODEL_PATH;
+
+  let result;
+  try {
+    result = await transcribeFile({ wav: parsed.wav, model });
+  } catch (err) {
+    console.error(`Error: ${err.message}`);
+    if (err.stderr) {
+      const head = err.stderr.split(/\r?\n/).filter(Boolean).slice(0, 3).join('\n  ');
+      if (head) console.error(`  whisper-cli stderr:\n  ${head}`);
+    }
+    return 1;
+  }
+
+  if (parsed.json) {
+    const versionInfo = getBinaryVersionInfo(result.binary);
+    const payload = {
+      text: result.text,
+      model: result.model,
+      wav: result.wav,
+      durationMs: result.durationMs,
+      binary: result.binary,
+      txtPath: result.txtPath,
+      version: versionInfo && versionInfo.version ? versionInfo.version : null,
+      versionLabel: versionInfo ? versionInfo.label : null,
+    };
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+  } else {
+    process.stdout.write(`${result.text}\n`);
+  }
+  return 0;
+}
+
 async function runDevices() {
   let result;
   try {
@@ -253,6 +341,10 @@ async function main(argv) {
 
   if (command === 'listen') {
     return runListen(tail);
+  }
+
+  if (command === 'transcribe') {
+    return runTranscribe(tail);
   }
 
   if (!['record', 'idle'].includes(command)) {
@@ -367,8 +459,10 @@ module.exports = {
   printHelp,
   runDevices,
   runListen,
+  runTranscribe,
   parseRecordArgs,
   parseIdleArgs,
   parseListenArgs,
+  parseTranscribeArgs,
   parseSubcommandArgs,
 };
