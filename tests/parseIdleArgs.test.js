@@ -1,19 +1,26 @@
 const { parseIdleArgs, parseListenArgs } = require('../src/index');
 
+function expectIdleShape(overrides = {}) {
+  return {
+    directory: null,
+    idleThreshold: null,
+    idleSilenceSeconds: null,
+    device: null,
+    maxChunkSeconds: null,
+    durationSeconds: null,
+    name: null,
+    root: null,
+    ...overrides,
+  };
+}
+
 describe('parseIdleArgs', () => {
-  test('requires a directory argument', () => {
-    expect(parseIdleArgs([]).error).toMatch(/output directory required/);
-    expect(parseIdleArgs(['--threshold', '0.1']).error).toMatch(/output directory required/);
+  test('with no args, returns all-null defaults (positional now optional)', () => {
+    expect(parseIdleArgs([])).toEqual(expectIdleShape());
   });
 
   test('returns directory with null knobs by default', () => {
-    expect(parseIdleArgs(['./recordings'])).toEqual({
-      directory: './recordings',
-      idleThreshold: null,
-      idleSilenceSeconds: null,
-      device: null,
-      maxChunkSeconds: null,
-    });
+    expect(parseIdleArgs(['./recordings'])).toEqual(expectIdleShape({ directory: './recordings' }));
   });
 
   test('parses --threshold as a percent (0..100)', () => {
@@ -40,6 +47,19 @@ describe('parseIdleArgs', () => {
   test('parses --max-chunk-seconds as a positive number', () => {
     expect(parseIdleArgs(['./r', '--max-chunk-seconds', '60']).maxChunkSeconds).toBe(60);
     expect(parseIdleArgs(['./r', '--max-chunk-seconds', '-1']).error).toMatch(/positive number/);
+  });
+
+  test('parses --duration as a positive number (MS-10: idle now supports duration)', () => {
+    expect(parseIdleArgs(['./r', '--duration', '3600']).durationSeconds).toBe(3600);
+    expect(parseIdleArgs(['./r', '--duration', '0']).error).toMatch(/positive number/);
+  });
+
+  test('parses --name and --root for structured layout', () => {
+    const r = parseIdleArgs(['--name', 'hourly', '--root', 'D:/recs', '--duration', '3600']);
+    expect(r.name).toBe('hourly');
+    expect(r.root).toBe('D:/recs');
+    expect(r.durationSeconds).toBe(3600);
+    expect(r.directory).toBeNull();
   });
 
   test('flags can come before or after the positional argument', () => {

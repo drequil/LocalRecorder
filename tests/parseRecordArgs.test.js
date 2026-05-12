@@ -1,25 +1,48 @@
 const { parseRecordArgs } = require('../src/index');
 
+function expectShape(overrides = {}) {
+  return {
+    output: null,
+    durationSeconds: null,
+    device: null,
+    name: null,
+    root: null,
+    ...overrides,
+  };
+}
+
 describe('parseRecordArgs', () => {
-  test('returns output with null duration/device when only a path is provided', () => {
-    expect(parseRecordArgs(['out.wav'])).toEqual({ output: 'out.wav', durationSeconds: null, device: null });
+  test('with no args, returns all-null defaults (positional now optional)', () => {
+    expect(parseRecordArgs([])).toEqual(expectShape());
+  });
+
+  test('returns output with null knobs when only a path is provided', () => {
+    expect(parseRecordArgs(['out.wav'])).toEqual(expectShape({ output: 'out.wav' }));
   });
 
   test('parses --duration N before the output path', () => {
-    expect(parseRecordArgs(['--duration', '5', 'out.wav'])).toEqual({ output: 'out.wav', durationSeconds: 5, device: null });
+    expect(parseRecordArgs(['--duration', '5', 'out.wav']))
+      .toEqual(expectShape({ output: 'out.wav', durationSeconds: 5 }));
   });
 
   test('parses --duration N after the output path', () => {
-    expect(parseRecordArgs(['out.wav', '--duration', '5'])).toEqual({ output: 'out.wav', durationSeconds: 5, device: null });
+    expect(parseRecordArgs(['out.wav', '--duration', '5']))
+      .toEqual(expectShape({ output: 'out.wav', durationSeconds: 5 }));
   });
 
   test('parses --duration=N form', () => {
-    expect(parseRecordArgs(['out.wav', '--duration=2.5'])).toEqual({ output: 'out.wav', durationSeconds: 2.5, device: null });
+    expect(parseRecordArgs(['out.wav', '--duration=2.5']))
+      .toEqual(expectShape({ output: 'out.wav', durationSeconds: 2.5 }));
   });
 
   test('parses --device alongside --duration', () => {
     expect(parseRecordArgs(['out.wav', '--device', '3', '--duration', '5']))
-      .toEqual({ output: 'out.wav', durationSeconds: 5, device: '3' });
+      .toEqual(expectShape({ output: 'out.wav', durationSeconds: 5, device: '3' }));
+  });
+
+  test('parses --name and --root for structured layout', () => {
+    expect(parseRecordArgs(['--name', 'meeting', '--root', 'D:/recs', '--duration', '60']))
+      .toEqual(expectShape({ name: 'meeting', root: 'D:/recs', durationSeconds: 60 }));
   });
 
   test('errors when --duration is followed by no value', () => {
@@ -32,11 +55,6 @@ describe('parseRecordArgs', () => {
     expect(parseRecordArgs(['out.wav', '--duration', '-3']).error).toMatch(/positive number/);
     expect(parseRecordArgs(['out.wav', '--duration', 'abc']).error).toMatch(/positive number/);
     expect(parseRecordArgs(['out.wav', '--duration=NaN']).error).toMatch(/positive number/);
-  });
-
-  test('errors when output is missing', () => {
-    expect(parseRecordArgs([]).error).toMatch(/output file path required/);
-    expect(parseRecordArgs(['--duration', '5']).error).toMatch(/output file path required/);
   });
 
   test('errors on unknown flags', () => {

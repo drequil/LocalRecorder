@@ -102,16 +102,25 @@ class AudioRecorder {
     });
   }
 
-  start(outputPath) {
+  start(outputPath, options = {}) {
     if (this.recording || this.idle || this.listening) {
       throw new Error('Recording already in progress');
     }
 
+    const writeSidecar = options.writeSidecar !== false; // default ON
+    const chunkStart = new Date();
+    const peakAcc = writeSidecar ? new PeakAccumulator({ skipBytes: WAV_HEADER_BYTES }) : null;
+
     this.fileStream = fs.createWriteStream(outputPath);
     this.fileStreamPath = outputPath;
-    this._attachFinalize(this.fileStream, outputPath);
+    this._attachFinalize(
+      this.fileStream,
+      outputPath,
+      writeSidecar ? { chunkStart, peakAcc, format: this.options } : null,
+    );
     this.recording = recorder.record({ ...this.options, audioType: 'wav' });
     const stream = this.recording.stream();
+    if (peakAcc) stream.on('data', (chunk) => peakAcc.push(chunk));
     stream.pipe(this.fileStream);
     stream.on('error', (err) => {
       // Intentional stop() nulls this.recording before sox's error fires.

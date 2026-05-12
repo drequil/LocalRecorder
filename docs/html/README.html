@@ -89,12 +89,55 @@ sudo pacman -S sox         # Arch
 node src/index.js listen [--device &lt;id&gt;]
 # Live peak-level meter (no file written). Useful for confirming the mic is picking up sound.
 
-node src/index.js record &lt;out.wav&gt; [--duration N] [--device &lt;id&gt;]
-# Record one WAV. Stops on Ctrl+C, or automatically after --duration seconds.
+node src/index.js record [&lt;out.wav&gt;] [--name &lt;label&gt;] [--root &lt;dir&gt;] [--duration N] [--device &lt;id&gt;]
+# Record one WAV (+ sidecar JSON). Stops on Ctrl+C, or automatically after --duration seconds.
 
-node src/index.js idle &lt;directory&gt; [--threshold P] [--silence N] [--device &lt;id&gt;] [--max-chunk-seconds N]
-# Per-silence WAV chunks plus JSON sidecars into &lt;directory&gt;.
+node src/index.js idle [&lt;directory&gt;] [--name &lt;label&gt;] [--root &lt;dir&gt;] [--duration N]
+                      [--threshold P] [--silence N] [--device &lt;id&gt;] [--max-chunk-seconds N]
+# Per-silence WAV chunks plus JSON sidecars into a structured session directory.
 </code></pre>
+<h3>Output layout</h3>
+<p>By default both <code>record</code> and <code>idle</code> write under <code>./recordings/</code>, into a session sub-directory:</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Flags</th>
+<th>Resulting path</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>record</code></td>
+<td><code>--name meeting</code></td>
+<td><code>recordings/meeting/meeting-YYYYMMDD-HHMMSS.wav</code> (+ <code>.json</code>)</td>
+</tr>
+<tr>
+<td><code>record</code></td>
+<td><em>(none)</em></td>
+<td><code>recordings/YYYY-MM-DD/recording-YYYYMMDD-HHMMSS.wav</code> (+ <code>.json</code>)</td>
+</tr>
+<tr>
+<td><code>record</code></td>
+<td>explicit <code>out.wav</code></td>
+<td>written literally; <code>--name</code>/<code>--root</code> ignored</td>
+</tr>
+<tr>
+<td><code>idle</code></td>
+<td><code>--name meeting</code></td>
+<td><code>recordings/meeting/chunk-YYYYMMDD-HHMMSS-mmm.wav</code> (+ <code>.json</code>)</td>
+</tr>
+<tr>
+<td><code>idle</code></td>
+<td><em>(none)</em></td>
+<td><code>recordings/YYYY-MM-DD/chunk-YYYYMMDD-HHMMSS-mmm.wav</code> (+ <code>.json</code>)</td>
+</tr>
+<tr>
+<td><code>idle</code></td>
+<td>explicit <code>&lt;directory&gt;</code></td>
+<td>chunks written into the directory verbatim</td>
+</tr>
+</tbody></table>
+<p><code>--root &lt;dir&gt;</code> overrides the <code>./recordings</code> default. Names are slugified (<code>Team Meeting!</code> → <code>Team-Meeting</code>); path-traversal patterns (<code>..</code>) are neutralised.</p>
 <h3>Flag reference</h3>
 <table>
 <thead>
@@ -107,9 +150,21 @@ node src/index.js idle &lt;directory&gt; [--threshold P] [--silence N] [--device
 </thead>
 <tbody><tr>
 <td><code>--duration N</code></td>
-<td>record</td>
+<td>record / idle</td>
 <td>seconds</td>
 <td>Stop after N seconds of wall clock. ~0.4 s of sox startup latency on Windows.</td>
+</tr>
+<tr>
+<td><code>--name &lt;label&gt;</code></td>
+<td>record / idle</td>
+<td>string</td>
+<td>Session label; selects the <code>recordings/&lt;label&gt;/</code> sub-directory.</td>
+</tr>
+<tr>
+<td><code>--root &lt;dir&gt;</code></td>
+<td>record / idle</td>
+<td>path</td>
+<td>Override the <code>./recordings</code> root.</td>
 </tr>
 <tr>
 <td><code>--device &lt;id&gt;</code></td>
@@ -136,13 +191,12 @@ node src/index.js idle &lt;directory&gt; [--threshold P] [--silence N] [--device
 <td>Force-rotate after N seconds even if the user is still talking. Off by default.</td>
 </tr>
 </tbody></table>
-<h3>Idle output</h3>
-<p>Each silence-delimited chunk becomes two files in <code>&lt;directory&gt;</code>:</p>
-<ul>
-<li><code>chunk-YYYYMMDD-HHMMSS-mmm.wav</code> — Whisper-aligned 16 kHz mono 16-bit signed PCM</li>
-<li><code>chunk-YYYYMMDD-HHMMSS-mmm.json</code> — sidecar (schema v1) with <code>{ version, wav, start, end, durationMs, audio, peak, peakDb, bytes }</code></li>
-</ul>
-<p>Empty placeholder chunks (sox waiting for audio that never arrived) are auto-deleted.</p>
+<h3>Sidecar JSON</h3>
+<p>Each WAV gets a matching <code>&lt;basename&gt;.json</code> sidecar (schema v1) with <code>{ version, wav, start, end, durationMs, audio, peak, peakDb, bytes }</code>. Empty placeholder chunks (sox waiting for audio that never arrived) are auto-deleted along with their sidecar slot.</p>
+<h3>Example — leave it running for an hour</h3>
+<pre><code class="language-bash">node src/index.js idle --name meeting --duration 3600 --threshold 0.5 --silence 20
+</code></pre>
+<p>That records up to 1 hour of meeting audio into <code>recordings/meeting/</code>, rotating to a new WAV+JSON pair every time you go silent for 20 s. Ambient noise below ~0.5% peak is filtered out.</p>
 <h2>Development</h2>
 <p>Follow MDM (Markdown-Driven Development) workflow with incremental sprints. Each sprint ends with commit, validation, and documentation update.</p>
 

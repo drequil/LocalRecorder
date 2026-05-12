@@ -76,31 +76,52 @@ node src/index.js devices
 node src/index.js listen [--device <id>]
 # Live peak-level meter (no file written). Useful for confirming the mic is picking up sound.
 
-node src/index.js record <out.wav> [--duration N] [--device <id>]
-# Record one WAV. Stops on Ctrl+C, or automatically after --duration seconds.
+node src/index.js record [<out.wav>] [--name <label>] [--root <dir>] [--duration N] [--device <id>]
+# Record one WAV (+ sidecar JSON). Stops on Ctrl+C, or automatically after --duration seconds.
 
-node src/index.js idle <directory> [--threshold P] [--silence N] [--device <id>] [--max-chunk-seconds N]
-# Per-silence WAV chunks plus JSON sidecars into <directory>.
+node src/index.js idle [<directory>] [--name <label>] [--root <dir>] [--duration N]
+                      [--threshold P] [--silence N] [--device <id>] [--max-chunk-seconds N]
+# Per-silence WAV chunks plus JSON sidecars into a structured session directory.
 ```
+
+### Output layout
+
+By default both `record` and `idle` write under `./recordings/`, into a session sub-directory:
+
+| Mode | Flags | Resulting path |
+|---|---|---|
+| `record` | `--name meeting` | `recordings/meeting/meeting-YYYYMMDD-HHMMSS.wav` (+ `.json`) |
+| `record` | _(none)_ | `recordings/YYYY-MM-DD/recording-YYYYMMDD-HHMMSS.wav` (+ `.json`) |
+| `record` | explicit `out.wav` | written literally; `--name`/`--root` ignored |
+| `idle` | `--name meeting` | `recordings/meeting/chunk-YYYYMMDD-HHMMSS-mmm.wav` (+ `.json`) |
+| `idle` | _(none)_ | `recordings/YYYY-MM-DD/chunk-YYYYMMDD-HHMMSS-mmm.wav` (+ `.json`) |
+| `idle` | explicit `<directory>` | chunks written into the directory verbatim |
+
+`--root <dir>` overrides the `./recordings` default. Names are slugified (`Team Meeting!` → `Team-Meeting`); path-traversal patterns (`..`) are neutralised.
 
 ### Flag reference
 
 | Flag | Subcommand | Type | Description |
 |---|---|---|---|
-| `--duration N` | record | seconds | Stop after N seconds of wall clock. ~0.4 s of sox startup latency on Windows. |
+| `--duration N` | record / idle | seconds | Stop after N seconds of wall clock. ~0.4 s of sox startup latency on Windows. |
+| `--name <label>` | record / idle | string | Session label; selects the `recordings/<label>/` sub-directory. |
+| `--root <dir>` | record / idle | path | Override the `./recordings` root. |
 | `--device <id>` | listen / record / idle | string | Audio input device. Default is `0` on Windows. Use `devices` to enumerate. |
 | `--threshold P` | idle | percent (0..100) | Silence detection threshold. Default `0.5`. Lower = more sensitive. |
 | `--silence N` | idle | seconds | Silence duration before a chunk rotates. Default `1.0`. |
 | `--max-chunk-seconds N` | idle | seconds | Force-rotate after N seconds even if the user is still talking. Off by default. |
 
-### Idle output
+### Sidecar JSON
 
-Each silence-delimited chunk becomes two files in `<directory>`:
+Each WAV gets a matching `<basename>.json` sidecar (schema v1) with `{ version, wav, start, end, durationMs, audio, peak, peakDb, bytes }`. Empty placeholder chunks (sox waiting for audio that never arrived) are auto-deleted along with their sidecar slot.
 
-- `chunk-YYYYMMDD-HHMMSS-mmm.wav` — Whisper-aligned 16 kHz mono 16-bit signed PCM
-- `chunk-YYYYMMDD-HHMMSS-mmm.json` — sidecar (schema v1) with `{ version, wav, start, end, durationMs, audio, peak, peakDb, bytes }`
+### Example — leave it running for an hour
 
-Empty placeholder chunks (sox waiting for audio that never arrived) are auto-deleted.
+```bash
+node src/index.js idle --name meeting --duration 3600 --threshold 0.5 --silence 20
+```
+
+That records up to 1 hour of meeting audio into `recordings/meeting/`, rotating to a new WAV+JSON pair every time you go silent for 20 s. Ambient noise below ~0.5% peak is filtered out.
 
 ## Development
 

@@ -469,6 +469,46 @@
 </li>
 <li>Why: every gap in the post-MS-8 brainstorm tagged &quot;CLI knobs missing&quot; is now closed. Tuning idle mode for a noisy office, picking a non-default microphone, and capping chunk length for transcription performance are all one-flag changes instead of edit-the-source changes. This unblocks longer-duration testing (a user can now leave <code>idle ./day-log --threshold 0.05 --max-chunk-seconds 30</code> running for an afternoon and inspect the resulting chunks) without further code work</li>
 </ul>
+<h2>Sprint 21 (MS-10): Structured Output Paths and Idle Duration (Completed)</h2>
+<ul>
+<li>Closes three usability gaps the user surfaced in the post-MS-9 walkthrough: (1) recordings used to dump into wherever the user invoked the CLI from instead of a known root, (2) <code>--duration</code> worked for <code>record</code> but not for <code>idle</code> (so leaving a long capture running unattended required an external timer), and (3) <code>record</code> mode produced a WAV but no sidecar (so single-file recordings had no companion metadata)</li>
+<li>New module <code>src/recordingPaths.js</code>: pure path-resolver. Exports <code>DEFAULT_ROOT = &#39;./recordings&#39;</code>, <code>sanitizeName(raw)</code> (slugifies labels into filesystem-safe forms; collapses path-traversal dot runs into a single dash so <code>&#39;../../etc/passwd&#39;</code> becomes <code>&#39;etc-passwd&#39;</code> instead of escaping the root), <code>isoSortableTimestamp(now)</code> (<code>YYYYMMDD-HHMMSS</code>), <code>isoDate(now)</code> (<code>YYYY-MM-DD</code>), <code>resolveRecordPath({ root, name, explicitPath, now })</code>, and <code>resolveIdleDirectory({ root, name, explicitDir, now })</code>. Both resolvers return <code>{ filePath?, sessionDir, explicit, label? }</code> so the caller can both <code>mkdir -p</code> the session dir and know whether to advertise the resolved path. Explicit positional args still win — legacy contracts are preserved</li>
+<li>Layout produced by the resolvers (under <code>./recordings/</code> by default; override with <code>--root</code>):<pre><code>recordings/
+  &lt;name-or-YYYY-MM-DD&gt;/
+    recording-&lt;ts&gt;.wav        # record mode, no --name (date-based session)
+    &lt;name&gt;-&lt;ts&gt;.wav           # record mode with --name
+    chunk-&lt;ts&gt;-&lt;ms&gt;.wav       # idle mode
+    chunk-&lt;ts&gt;-&lt;ms&gt;.json      # MS-8 sidecar
+    recording-&lt;ts&gt;.json       # MS-10 sidecar for record mode
+</code></pre>
+</li>
+<li><code>AudioRecorder.start(outputPath, { writeSidecar = true })</code> now generates a sidecar by default. Same <code>_attachFinalize</code> path that idle uses; the only difference is the <code>chunkStart</code> clock starts inside <code>start()</code> and the format is read from the constructor&#39;s <code>WHISPER_AUDIO_FORMAT</code>-derived <code>this.options</code>. Pass <code>writeSidecar: false</code> to opt out (kept for tests and any future &quot;tiny throwaway file&quot; use case)</li>
+<li>New CLI flags: <code>--name &lt;label&gt;</code> and <code>--root &lt;dir&gt;</code> for both <code>record</code> and <code>idle</code>; <code>--duration N</code> for <code>idle</code> (previously record-only). <code>IDLE_FLAGS</code> picks up all three; <code>RECORD_FLAGS</code> picks up <code>--name</code> and <code>--root</code>. The duration logic in <code>main()</code> is now subcommand-agnostic — <code>idle</code> prints <code>Listening for Ns. Press Ctrl+C to stop early.</code> and uses the same <code>shutdown(reason)</code> plumbing as <code>record</code>. Shutdown grace bumped from 150 ms to 250 ms so the sidecar write (an extra <code>fs.writeFileSync</code> after the WAV header fixup) gets a clean window before <code>process.exit(0)</code></li>
+<li>Positional args (<code>&lt;out.wav&gt;</code> for record, <code>&lt;directory&gt;</code> for idle) are now <strong>optional</strong>. If absent, the resolver picks a structured path based on <code>--name</code>/<code>--root</code> or the date. If present, they&#39;re used verbatim and the structured-layout flags are ignored (parsers don&#39;t reject them; the resolver just returns <code>explicit: true</code>). This is the lowest-surprise behavior for a user who sometimes runs <code>node src/index.js record foo.wav</code> (legacy) and sometimes runs <code>node src/index.js record --name foo</code> (new)</li>
+<li><code>src/index.js</code> calls <code>fs.mkdirSync(sessionDir, { recursive: true })</code> before opening any stream. <code>idleListen</code> also does this internally for its own directory, but <code>record</code> needs it because <code>start()</code> opens the write stream immediately</li>
+<li>Tests added (15 new across 3 files):<ul>
+<li><code>tests/recordingPaths.test.js</code> (12 new): <code>sanitizeName</code> happy paths, slugification, path-traversal neutralization, empty/whitespace/non-string rejection, leading/trailing dash strip; <code>isoSortableTimestamp</code> and <code>isoDate</code> formatting; <code>resolveRecordPath</code> with explicit path / with name / without name / DEFAULT_ROOT fallback / name slugification / blank-name date fallback; <code>resolveIdleDirectory</code> with explicit dir / with name / without name / DEFAULT_ROOT fallback</li>
+<li><code>tests/parseRecordArgs.test.js</code> (2 new): <code>--name &lt;label&gt;</code> parsing and <code>--root &lt;dir&gt;</code> parsing; existing tests updated to expect the new <code>name: null</code> / <code>root: null</code> fields and to drop the now-obsolete &quot;missing output path&quot; rejection (positional is optional now)</li>
+<li><code>tests/parseIdleArgs.test.js</code> (1 new): <code>--duration</code>, <code>--name</code>, and <code>--root</code> parsing for idle. Existing tests updated to expect the new <code>durationSeconds: null</code> / <code>name: null</code> / <code>root: null</code> fields and to drop the now-obsolete &quot;missing directory&quot; rejection</li>
+</ul>
+</li>
+<li>Files added: <code>src/recordingPaths.js</code>, <code>tests/recordingPaths.test.js</code></li>
+<li>Files modified: <code>src/audioRecorder.js</code>, <code>src/index.js</code>, <code>README.md</code>, <code>tests/parseRecordArgs.test.js</code>, <code>tests/parseIdleArgs.test.js</code>, <code>docs/sprint-log.md</code>, <code>docs/sprint-plan.md</code>, regenerated HTML mirrors</li>
+<li>Validation:<ul>
+<li><code>npm test</code> — 119/119 passing across 10 suites (99 → 119 with 20 new tests, including the 12 recordingPaths cases and assorted parser refits)</li>
+<li><code>node src/index.js idle --name ms10-demo --threshold 0.01 --silence 3 --duration 5</code> end-to-end: produced <code>recordings/ms10-demo/chunk-20260512-094325-694.wav</code> (147,456 bytes, <code>dataSize: 147412</code>) and its sidecar with <code>version: 1</code>, <code>durationMs: 4607</code>, <code>peak: 0.0042</code>, <code>peakDb: -47.5</code>, <code>audio: { sampleRate: 16000, channels: 1, bitDepth: 16, encoding: &#39;signed-integer&#39; }</code>. Exit 0 after the duration timer fired and the chunk got finalized inside the 250 ms shutdown grace</li>
+<li><code>node src/index.js help</code> rendered the updated layout/notes blocks</li>
+</ul>
+</li>
+<li>Known limitations:<ul>
+<li><strong>No path-collision detection between sessions.</strong> Two <code>idle</code> sessions launched against the same <code>--name</code> write into the same folder; the timestamped chunk filenames prevent same-millisecond collisions, but the user has to manage their own naming hygiene. Documented behavior; matches the project&#39;s &quot;tooling is honest, not opinionated&quot; stance</li>
+<li><strong><code>--name</code> is required to look human</strong> — no validation that a label is unique or remembered between runs. A future &quot;session manifest&quot; (writing a small <code>session.json</code> per directory) could turn this folder into a first-class addressable artifact, but is out of scope here</li>
+<li><strong>Record-mode sidecar uses the same schema as idle.</strong> Fields like <code>start</code> and <code>end</code> for record mode are the recorder&#39;s wall-clock start/stop, not just the wav duration. <code>durationMs</code> is still audio-derived. Acceptable; future schema v2 (if needed) could split &quot;trigger source&quot; into the schema to disambiguate &quot;rotation by silence&quot; vs &quot;rotation by duration timer&quot; vs &quot;rotation by Ctrl+C&quot;</li>
+<li><strong>Shutdown grace is now 250 ms.</strong> Adds a perceptible pause when stopping a short recording. The alternative was making <code>recorder.stop()</code> async-aware (it already returns synchronously after dispatching <code>end</code>); kept the simpler approach until profiling says otherwise</li>
+</ul>
+</li>
+<li>Why: the user&#39;s mental model is &quot;I want a folder per meeting, and I want unattended captures to stop themselves&quot;. MS-10 makes both of those one-flag operations. Combined with MS-9&#39;s tuning knobs, the CLI is now ergonomic enough for the &quot;leave it running for an hour while I&#39;m in a meeting&quot; use case the user asked for explicitly — the canonical command is now <code>node src/index.js idle --name meeting --duration 3600 --threshold 0.5 --silence 20</code></li>
+</ul>
 
 </body>
 </html>

@@ -1,7 +1,9 @@
+const fs = require('fs');
 const path = require('path');
 const AudioRecorder = require('./audioRecorder');
 const { enumerateDevices } = require('./audioDevices');
 const { peak16LE, toDb, renderBar } = require('./audioLevels');
+const { resolveRecordPath, resolveIdleDirectory } = require('./recordingPaths');
 
 // Minimal subcommand flag parser. flagSpec maps `--flag-name` to a descriptor
 // {type, as}. Supports `--flag value` and `--flag=value` shapes; rejects unknown
@@ -71,6 +73,8 @@ function parseSubcommandArgs(args, flagSpec) {
 const RECORD_FLAGS = {
   '--duration': { type: 'positiveNumber', as: 'durationSeconds' },
   '--device': { type: 'string', as: 'device' },
+  '--name': { type: 'string', as: 'name' },
+  '--root': { type: 'string', as: 'root' },
 };
 
 const IDLE_FLAGS = {
@@ -78,6 +82,9 @@ const IDLE_FLAGS = {
   '--silence': { type: 'positiveNumber', as: 'idleSilenceSeconds' },
   '--device': { type: 'string', as: 'device' },
   '--max-chunk-seconds': { type: 'positiveNumber', as: 'maxChunkSeconds' },
+  '--duration': { type: 'positiveNumber', as: 'durationSeconds' },
+  '--name': { type: 'string', as: 'name' },
+  '--root': { type: 'string', as: 'root' },
 };
 
 const LISTEN_FLAGS = {
@@ -88,16 +95,25 @@ function printHelp() {
   console.log('LocalRecorder v0.1.0');
   console.log('');
   console.log('Subcommands:');
-  console.log('  devices                                    List audio input devices visible to sox');
-  console.log('  listen   [--device <id>]                   Live peak-level meter (no file written)');
-  console.log('  record <out.wav> [--duration N] [--device <id>]');
-  console.log('                                             Record one WAV (Ctrl+C, or stop after N seconds)');
-  console.log('  idle    <directory> [--threshold P] [--silence N] [--device <id>] [--max-chunk-seconds N]');
-  console.log('                                             Per-silence WAV chunks + JSON sidecars into <directory>');
-  console.log('  help                                       Show this help');
+  console.log('  devices                                                List audio input devices visible to sox');
+  console.log('  listen   [--device <id>]                               Live peak-level meter (no file written)');
+  console.log('  record   [<out.wav>] [--name <label>] [--root <dir>]   Record one WAV');
+  console.log('           [--duration N] [--device <id>]');
+  console.log('  idle     [<directory>] [--name <label>] [--root <dir>] Per-silence WAV chunks + JSON sidecars');
+  console.log('           [--threshold P] [--silence N] [--device <id>]');
+  console.log('           [--duration N] [--max-chunk-seconds N]');
+  console.log('  help                                                   Show this help');
+  console.log('');
+  console.log('Output layout:');
+  console.log('  --name <label>          recordings/<label>/<label>-<ts>.wav (record)');
+  console.log('                          recordings/<label>/chunk-<ts>-<ms>.wav (idle)');
+  console.log('  no name                 recordings/<YYYY-MM-DD>/recording-<ts>.wav (record)');
+  console.log('                          recordings/<YYYY-MM-DD>/chunk-<ts>-<ms>.wav (idle)');
+  console.log('  explicit positional     written literally; --name / --root ignored');
+  console.log('  --root <dir>            override the recordings root (default ./recordings)');
   console.log('');
   console.log('Flag notes:');
-  console.log('  --duration N            Stop after N seconds (positive number)');
+  console.log('  --duration N            Stop after N seconds (record + idle, positive number)');
   console.log('  --threshold P           Silence threshold percent (0..100; default 0.5)');
   console.log('  --silence N             Silence duration before rotation in seconds (positive; default 1.0)');
   console.log('  --device <id>           Audio input device id (Windows waveaudio index; default 0)');
@@ -108,12 +124,13 @@ function parseRecordArgs(args) {
   const parsed = parseSubcommandArgs(args, RECORD_FLAGS);
   if (parsed.error) return { error: parsed.error };
   const { flags, positional } = parsed;
-  if (positional.length === 0) return { error: 'output file path required' };
   if (positional.length > 1) return { error: `unexpected extra argument: ${positional[1]}` };
   return {
-    output: positional[0],
+    output: positional[0] != null ? positional[0] : null,
     durationSeconds: flags.durationSeconds != null ? flags.durationSeconds : null,
     device: flags.device != null ? flags.device : null,
+    name: flags.name != null ? flags.name : null,
+    root: flags.root != null ? flags.root : null,
   };
 }
 
@@ -121,14 +138,16 @@ function parseIdleArgs(args) {
   const parsed = parseSubcommandArgs(args, IDLE_FLAGS);
   if (parsed.error) return { error: parsed.error };
   const { flags, positional } = parsed;
-  if (positional.length === 0) return { error: 'output directory required' };
   if (positional.length > 1) return { error: `unexpected extra argument: ${positional[1]}` };
   return {
-    directory: positional[0],
+    directory: positional[0] != null ? positional[0] : null,
     idleThreshold: flags.idleThreshold != null ? flags.idleThreshold : null,
     idleSilenceSeconds: flags.idleSilenceSeconds != null ? flags.idleSilenceSeconds : null,
     device: flags.device != null ? flags.device : null,
     maxChunkSeconds: flags.maxChunkSeconds != null ? flags.maxChunkSeconds : null,
+    durationSeconds: flags.durationSeconds != null ? flags.durationSeconds : null,
+    name: flags.name != null ? flags.name : null,
+    root: flags.root != null ? flags.root : null,
   };
 }
 
@@ -244,6 +263,7 @@ async function main(argv) {
 
   let recordTarget;
   let idleDirectory;
+  let sessionDir;
   let durationSeconds = null;
   let recorderOptions = {};
 
@@ -253,7 +273,13 @@ async function main(argv) {
       console.error(`Error: ${parsed.error}`);
       return 1;
     }
-    recordTarget = path.resolve(parsed.output);
+    const resolved = resolveRecordPath({
+      root: parsed.root || undefined,
+      name: parsed.name,
+      explicitPath: parsed.output,
+    });
+    recordTarget = resolved.filePath;
+    sessionDir = resolved.sessionDir;
     durationSeconds = parsed.durationSeconds;
     recorderOptions = compactOptions({ device: parsed.device });
   } else {
@@ -262,7 +288,14 @@ async function main(argv) {
       console.error(`Error: ${parsed.error}`);
       return 1;
     }
-    idleDirectory = path.resolve(parsed.directory);
+    const resolved = resolveIdleDirectory({
+      root: parsed.root || undefined,
+      name: parsed.name,
+      explicitDir: parsed.directory,
+    });
+    idleDirectory = resolved.sessionDir;
+    sessionDir = resolved.sessionDir;
+    durationSeconds = parsed.durationSeconds;
     recorderOptions = compactOptions({
       device: parsed.device,
       idleThreshold: parsed.idleThreshold,
@@ -271,8 +304,19 @@ async function main(argv) {
     });
   }
 
+  // Ensure the session directory exists before opening any file streams.
+  // idleListen does this internally too, but for record mode start() expects
+  // the parent directory to already exist.
+  try {
+    fs.mkdirSync(sessionDir, { recursive: true });
+  } catch (err) {
+    console.error(`Error: could not create output directory ${sessionDir}: ${err.message}`);
+    return 1;
+  }
+
   const recorder = new AudioRecorder(recorderOptions);
   if (command === 'idle') {
+    console.log(`Idle session directory: ${idleDirectory}`);
     recorder.idleListen(idleDirectory);
   } else {
     recorder.start(recordTarget);
@@ -291,15 +335,16 @@ async function main(argv) {
       // recorder was not active; safe to ignore
     }
     // Give the fileStream's 'close' event a tick to fire so the WAV header
-    // fixup can run before the process exits.
-    setTimeout(() => process.exit(0), 150);
+    // fixup and sidecar write can run before the process exits.
+    setTimeout(() => process.exit(0), 250);
   };
 
   process.on('SIGINT', () => shutdown('Stopping...'));
   process.on('SIGTERM', () => shutdown('Stopping...'));
 
   if (durationSeconds !== null) {
-    console.log(`Recording for ${durationSeconds}s. Press Ctrl+C to stop early.`);
+    const label = command === 'idle' ? 'Listening' : 'Recording';
+    console.log(`${label} for ${durationSeconds}s. Press Ctrl+C to stop early.`);
     durationTimer = setTimeout(() => shutdown(`Reached ${durationSeconds}s, stopping.`), durationSeconds * 1000);
   }
 

@@ -134,8 +134,14 @@
 <td><code>--threshold</code>, <code>--silence</code>, <code>--device</code>, <code>--max-chunk-seconds</code></td>
 <td>✅</td>
 </tr>
+<tr>
+<td>MS-10</td>
+<td>Structured output paths + idle duration</td>
+<td><code>--name</code>, <code>--root</code>, <code>--duration</code> for idle; record-mode sidecars</td>
+<td>✅</td>
+</tr>
 </tbody></table>
-<p>Eight mini-sprints; each should be ~30–90 minutes of work. After MS-3 you can demo &quot;listening&quot;. After MS-4 you can demo &quot;recording&quot;. After MS-8 the audio capture pipeline is ready to hand off to a transcription sprint.</p>
+<p>Ten mini-sprints; each should be ~30–90 minutes of work. After MS-3 you can demo &quot;listening&quot;. After MS-4 you can demo &quot;recording&quot;. After MS-8 the audio capture pipeline is ready to hand off to a transcription sprint. MS-9 and MS-10 added CLI ergonomics and structured output that the user surfaced in the post-MS-8 walkthrough.</p>
 <hr>
 <h2>Mini-sprint details</h2>
 <h3>MS-1 — Sox dependency probe</h3>
@@ -242,6 +248,18 @@
 <li><strong>Outcome:</strong> schema v1 exported from <code>src/chunkSidecar.js</code>. Reuses MS-3&#39;s <code>peak16LE</code> via a new <code>PeakAccumulator</code> that skips the 44-byte WAV header prefix. Wired into <code>idleListen</code> via the existing <code>_attachFinalize</code> path so the WAV header fixup and the sidecar write happen in the same <code>&#39;close&#39;</code> callback.</li>
 <li><strong>Realized acceptance criteria:</strong> end-to-end smoke shows <code>durationMs</code> matches <code>sox stat</code>&#39;s reported length to the millisecond; peak agrees with sox&#39;s max amplitude within rounding; every produced WAV has a sidecar with all required fields and <code>version === 1</code>.</li>
 </ul>
+<h3>MS-9 — CLI knobs for idle / listen / record (Completed in Sprint 20)</h3>
+<ul>
+<li><strong>Goal:</strong> expose every per-run audio capture knob through CLI flags so tuning idle mode for a noisy office or picking a non-default microphone doesn&#39;t require a source edit.</li>
+<li><strong>Outcome:</strong> generic <code>parseSubcommandArgs(args, flagSpec)</code> helper with a <code>COERCERS</code> table; <code>RECORD_FLAGS</code>, <code>IDLE_FLAGS</code>, <code>LISTEN_FLAGS</code> schemas; new <code>--threshold</code>, <code>--silence</code>, <code>--max-chunk-seconds</code> (idle) and <code>--device</code> (all three). <code>maxChunkSeconds</code> plumbs through <code>AudioRecorder</code> and arms a per-chunk timer that kills sox to force a rotation when silence detection alone isn&#39;t doing the job.</li>
+<li><strong>Realized acceptance criteria:</strong> running <code>idle &lt;tmpdir&gt; --threshold 0.01 --max-chunk-seconds 3</code> for 8 s produces 4 complete chunk WAV+JSON pairs at ~3 s wall-clock intervals; sidecar fields are preserved when the chunk ends via the timer instead of natural silence detection.</li>
+</ul>
+<h3>MS-10 — Structured output paths + idle duration (Completed in Sprint 21)</h3>
+<ul>
+<li><strong>Goal:</strong> stop dumping recordings into whichever cwd the user happened to be in; give them a named-session sub-folder per recording; let <code>idle</code> also stop itself after <code>--duration N</code>; write a sidecar for <code>record</code> mode too.</li>
+<li><strong>Outcome:</strong> new <code>src/recordingPaths.js</code> resolver (<code>resolveRecordPath</code> / <code>resolveIdleDirectory</code>) produces <code>recordings/&lt;name-or-date&gt;/&lt;base&gt;-&lt;ts&gt;.wav</code> paths. CLI gains <code>--name</code> and <code>--root</code> for both <code>record</code> and <code>idle</code>, plus <code>--duration</code> for <code>idle</code>. <code>AudioRecorder.start()</code> now accepts an options object with <code>writeSidecar</code> (default <code>true</code>) and emits a companion JSON via the same <code>_attachFinalize</code> path that idle uses. Positional <code>&lt;out.wav&gt;</code> / <code>&lt;directory&gt;</code> args are now optional — legacy invocations still work verbatim. Shutdown grace bumped from 150 ms to 250 ms to absorb the extra sidecar write.</li>
+<li><strong>Realized acceptance criteria:</strong> <code>node src/index.js idle --name meeting --duration 3600 --threshold 0.5 --silence 20</code> runs unattended for up to an hour, writing chunk WAV+JSON pairs into <code>recordings/meeting/</code>. Verified end-to-end with a <code>--duration 5</code> quick run: WAV (147 KB) and sidecar (<code>durationMs: 4607</code>, <code>peak: 0.0042</code>) both materialize in the resolved structured directory. <code>npm test</code> reports 119/119 passing including 12 new <code>tests/recordingPaths.test.js</code> cases.</li>
+</ul>
 <hr>
 <h2>Cross-cutting checklist for every mini-sprint</h2>
 <p>Per <code>.instructions.md</code> workflow rules:</p>
@@ -273,8 +291,8 @@
 <li><code>npm run audio:check</code> reports a sox version.</li>
 <li><code>node src/index.js devices</code> lists at least the default mic.</li>
 <li><code>node src/index.js listen</code> shows a visibly-changing level bar that responds to ambient sound.</li>
-<li><code>node src/index.js record --duration 5 demo.wav</code> produces a 5-second playable WAV.</li>
-<li><code>node src/index.js idle ./recordings/</code> produces one valid WAV (plus matching JSON sidecar) per silence-delimited vocal burst.</li>
+<li><code>node src/index.js record --duration 5 demo.wav</code> produces a 5-second playable WAV (with companion sidecar JSON).</li>
+<li><code>node src/index.js idle --name &lt;label&gt; --duration &lt;seconds&gt;</code> produces one valid WAV (plus matching JSON sidecar) per silence-delimited vocal burst, under <code>./recordings/&lt;label&gt;/</code>.</li>
 <li><code>npm test</code> is green and tests assert the new lifecycle invariants (Whisper-aligned defaults, sidecar shape, no double-start).</li>
 </ul>
 
