@@ -283,6 +283,45 @@
 </li>
 <li>Why: MS-4 deliberately deferred this so the WAV-from-pipe milestone could land cleanly. Doing it now (before MS-5&#39;s <code>--duration</code> flag exercises the same code path many more times) means every WAV the project produces from here on has truthful header sizes by default</li>
 </ul>
+<h2>Sprint 16 (MS-5): Fixed-Duration Record (Completed)</h2>
+<ul>
+<li>Added <code>--duration &lt;seconds&gt;</code> (or <code>--duration=&lt;seconds&gt;</code>) flag to the <code>record</code> CLI subcommand. Both forms work; the flag may appear before or after the output path. <code>node src/index.js record out.wav --duration 5</code> now stops cleanly after ~5 seconds with no Ctrl+C</li>
+<li>Extracted a pure <code>parseRecordArgs(args)</code> helper in <code>src/index.js</code> and exported it for testing. Returns <code>{ output, durationSeconds }</code> on success or <code>{ error }</code> on validation failure. Rejects non-numeric, zero, or negative durations and unknown flags</li>
+<li>The CLI&#39;s <code>record</code>/<code>idle</code> shutdown path is now unified through a single <code>shutdown(reason)</code> function that:<ul>
+<li>clears the duration timer if set</li>
+<li>calls <code>recorder.stop()</code> (which queues the WAV header fixup from MS-4.5)</li>
+<li>waits 150 ms before <code>process.exit(0)</code> so the fileStream <code>&#39;close&#39;</code> event has time to fire and the WAV header gets finalized before the process dies</li>
+</ul>
+</li>
+<li>The duration timer fires <code>shutdown(&#39;Reached Ns, stopping.&#39;)</code>; the SIGINT/SIGTERM handlers fire <code>shutdown(&#39;Stopping...&#39;)</code>. Same code path in both cases, so Ctrl+C and timer-driven exit produce identical-shape WAV files</li>
+<li>Tests added in <code>tests/parseRecordArgs.test.js</code> (9 cases):<ul>
+<li>Plain <code>out.wav</code> (no duration)</li>
+<li><code>--duration N</code> before and after the output path</li>
+<li><code>--duration=N</code> shorthand</li>
+<li>Missing value after <code>--duration</code></li>
+<li>Non-positive / non-numeric / NaN duration values</li>
+<li>Missing output path</li>
+<li>Unknown flag</li>
+<li>Extra positional argument</li>
+</ul>
+</li>
+<li>Files modified: <code>src/index.js</code>, <code>docs/sprint-log.md</code>, <code>docs/sprint-plan.md</code>, regenerated HTML mirrors</li>
+<li>Files added: <code>tests/parseRecordArgs.test.js</code></li>
+<li>Validation:<ul>
+<li><code>npm test</code> -- 56/56 passing across 6 suites (47 -&gt; 56 with 9 new arg-parser tests)</li>
+<li><code>node src/index.js record demo-duration.wav --duration 3</code> -- exit 0 after ~3.8 s wall clock; produced 81,920-byte WAV with <code>dataSize: 81876</code> (matches <code>fileSize - 44</code>, so the MS-4.5 header fix ran inside the 150 ms shutdown grace). <code>sox stat</code> reports 40,938 samples / 2.56 seconds / max amplitude 0.0007 (ambient room only)</li>
+<li><code>node src/index.js record demo-duration.wav --duration 5</code> -- exit 0 after ~5.7 s wall clock; <code>sox stat</code> reports 73,706 samples / 4.61 seconds</li>
+<li><code>Get-Process sox</code> after both runs -- empty</li>
+</ul>
+</li>
+<li>Known limitations:<ul>
+<li><strong>Sox startup slippage:</strong> the captured audio duration is consistently ~0.4 s shorter than the requested <code>--duration</code> because sox spends ~400 ms on Windows initializing the waveaudio driver before the first sample lands. A 5-second request yields ~4.6 s of audio. Documented; tracked as MS-5.1 (optional). The natural fix is to let sox terminate itself via its <code>trim 0 N</code> effect instead of an out-of-band Node-side timer; that requires teaching <code>recorderPatch.js</code> to accept a duration option and append the effect to the sox arg list. Deferred because it&#39;s not blocking, and the current behavior is honest (&quot;recorder ran for N seconds&quot;)</li>
+<li><code>--duration 0.5</code> or shorter is accepted but the captured audio may be empty or under-100ms; below the startup-latency budget, sox can finish before producing any samples. Documented inline; users should treat sub-1-second requests as best-effort</li>
+<li>The 150 ms shutdown grace adds wall-clock latency to the CLI but is necessary to give the WAV header fixup time to run. Acceptable; the alternative was an async <code>await</code> chain through <code>recorder.stop()</code> which is more invasive</li>
+</ul>
+</li>
+<li>Why: this is the second half of &quot;audio recording working&quot;. The CLI can now produce known-duration WAVs non-interactively, which is the prerequisite for batch capture, scripted demos, and the MS-6 rolling chunks (which also need timer-driven shutdown internally)</li>
+</ul>
 
 </body>
 </html>

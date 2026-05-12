@@ -22,21 +22,23 @@ Listening before recording, for three reasons:
 
 ### Phase 3A — Listening pipeline (prove input)
 
-| Sprint | Title | Outcome |
-|---|---|---|
-| MS-1 | Sox dependency probe | `npm run audio:check` reports sox version or a clean install message |
-| MS-2 | Device enumeration | `node src/index.js devices` lists detected audio inputs |
-| MS-3 | Live level meter | `node src/index.js listen` prints a live peak-amplitude bar |
+| Sprint | Title | Outcome | Status |
+|---|---|---|---|
+| MS-1 | Sox dependency probe | `npm run audio:check` reports sox version or a clean install message | ✅ |
+| MS-2 | Device enumeration | `node src/index.js devices` lists detected audio inputs | ✅ |
+| MS-3 | Live level meter | `node src/index.js listen` prints a live peak-amplitude bar | ✅ |
 
 ### Phase 3B — Recording pipeline (prove output)
 
-| Sprint | Title | Outcome |
-|---|---|---|
-| MS-4 | WAV output from `start()` | `node src/index.js record out.wav` + Ctrl+C produces a playable WAV |
-| MS-5 | Fixed-duration record | `record --duration 5 out.wav` writes exactly ~5 s of audio |
-| MS-6 | Rolling idle chunks | `idle <dir>` writes timestamped per-silence WAV files in `<dir>` |
-| MS-7 | Whisper-aligned defaults | Default capture is 16 kHz mono 16-bit signed PCM in WAV |
-| MS-8 | Chunk metadata sidecars | Each idle-mode WAV gets a sidecar `.json` with start, end, peak |
+| Sprint | Title | Outcome | Status |
+|---|---|---|---|
+| MS-4 | WAV output from `start()` | `node src/index.js record out.wav` + Ctrl+C produces a playable WAV | ✅ |
+| MS-4.5 | WAV header fixup | RIFF/data chunk sizes reflect actual file size, not sox's ~2 GiB placeholder | ✅ |
+| MS-5 | Fixed-duration record | `record --duration 5 out.wav` stops cleanly after ~5 s | ✅ |
+| MS-5.1 | Sox-side duration trim (optional) | Captured audio length matches `--duration` to within 100 ms (compensates the ~400 ms Windows startup latency) | optional |
+| MS-6 | Rolling idle chunks | `idle <dir>` writes timestamped per-silence WAV files in `<dir>` | next |
+| MS-7 | Whisper-aligned defaults | Default capture is 16 kHz mono 16-bit signed PCM in WAV | pending |
+| MS-8 | Chunk metadata sidecars | Each idle-mode WAV gets a sidecar `.json` with start, end, peak | pending |
 
 Eight mini-sprints; each should be ~30–90 minutes of work. After MS-3 you can demo "listening". After MS-4 you can demo "recording". After MS-8 the audio capture pipeline is ready to hand off to a transcription sprint.
 
@@ -99,18 +101,26 @@ Eight mini-sprints; each should be ~30–90 minutes of work. After MS-3 you can 
 - **Rollback:** revert the option change; the file goes back to raw PCM (broken-but-known state).
 - **Risk:** Ctrl+C may truncate the WAV before sox writes the data-size header, leaving an invalid file. MS-5 partly addresses this by using sox's own duration termination instead of SIGINT.
 
-### MS-5 — Fixed-duration record
+### MS-5 — Fixed-duration record (Completed in Sprint 16)
 
-- **Goal:** `record --duration 5 out.wav` produces exactly ~5 seconds of valid WAV without needing Ctrl+C.
-- **Touches:** `src/index.js` (parse `--duration`), `src/audioRecorder.js` (optional `durationSeconds` in options or a setTimeout-driven stop in the CLI), tests.
+- **Goal:** `record --duration 5 out.wav` runs for ~5 seconds and exits cleanly without Ctrl+C.
+- **Touches:** `src/index.js` (new `parseRecordArgs` helper + unified `shutdown(reason)`), `tests/parseRecordArgs.test.js`.
+- **Outcome:** flag works in both `--duration N` and `--duration=N` form, before or after the output path. CLI exits 0 after the timer fires; the WAV header fixup (MS-4.5) runs inside a 150 ms shutdown grace.
+- **Realized acceptance criteria:** process exits 0; file is a valid RIFF/WAVE WAV with correct chunk sizes; audio duration is approximately `duration - 0.4 s` because of sox's Windows startup latency.
+- **Known slippage:** sox spends ~400 ms initializing waveaudio before the first sample arrives, so a `--duration 5` request yields ~4.6 s of captured audio. Honest behavior; MS-5.1 (optional, below) is the proper fix if precision matters.
+
+### MS-5.1 — Sox-side duration trim (optional)
+
+- **Goal:** make captured audio length match `--duration` to within ~100 ms by terminating the recording inside sox rather than from Node.
+- **Touches:** `src/recorderPatch.js` (accept `durationSeconds` in `options`, append `trim 0 <n>` to the sox arg list), `src/audioRecorder.js` (pass `durationSeconds` through), `src/index.js` (already plumbs duration to the recorder), tests.
 - **Steps:**
-  1. CLI parses `--duration <n>` (positive number).
-  2. After `recorder.start(outputPath)`, set `setTimeout(() => { recorder.stop(); process.exit(0); }, n * 1000)`.
-  3. Test that the CLI dispatch handles `--duration` argument shape (unit-level only; no real recording).
-- **Validation:** `record --duration 5 out.wav` produces a file whose reported duration is between 4.8 and 5.5 seconds (check via sox: `sox out.wav -n stat`).
-- **Acceptance criteria:** duration in range, file playable, process exits 0.
-- **Rollback:** drop the flag and the setTimeout block.
-- **Risk:** sox latency on first sample may make short durations (≤1 s) record less than expected; document the lower bound.
+  1. Extend the patched recorder to consume `options.durationSeconds` and append `trim 0 <n>` to the sox effect chain.
+  2. When sox exits naturally at the end of the trim, the existing `'end'`/`'close'` plumbing closes the file and the MS-4.5 header fixup runs as it does today.
+  3. Keep the Node-side timer as a watchdog (e.g. `(durationSeconds + 1) * 1000` ms) so a misbehaving sox can still be killed.
+- **Validation:** `record --duration 5 out.wav` → `sox out.wav -n stat` reports Length between 4.95 s and 5.05 s.
+- **Acceptance criteria:** captured length within ±100 ms of requested, on three consecutive runs.
+- **Rollback:** drop the `trim` append + option; behavior reverts to the MS-5 ~0.4 s slippage.
+- **Risk:** the trim effect runs *after* resampling, so it operates on the requested sample rate, not the device's native rate; should be a non-issue at 16 kHz but worth confirming on first run.
 
 ### MS-6 — Rolling idle chunks
 

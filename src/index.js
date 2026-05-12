@@ -7,11 +7,53 @@ function printHelp() {
   console.log('LocalRecorder v0.1.0');
   console.log('');
   console.log('Usage:');
-  console.log('  node src/index.js devices               List audio input devices visible to sox');
-  console.log('  node src/index.js listen                Live peak-level meter (no file written)');
-  console.log('  node src/index.js record <output.wav>   Start a recording (Ctrl+C to stop)');
-  console.log('  node src/index.js idle <output.wav>     Idle listening with silence detection');
-  console.log('  node src/index.js help                  Show this help');
+  console.log('  node src/index.js devices                              List audio input devices visible to sox');
+  console.log('  node src/index.js listen                               Live peak-level meter (no file written)');
+  console.log('  node src/index.js record <output.wav> [--duration N]   Record (Ctrl+C, or stop after N seconds)');
+  console.log('  node src/index.js idle <output.wav>                    Idle listening with silence detection');
+  console.log('  node src/index.js help                                 Show this help');
+}
+
+function parseRecordArgs(args) {
+  let output = null;
+  let durationSeconds = null;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--duration') {
+      const next = args[i + 1];
+      if (next === undefined) {
+        return { error: '--duration requires a value (seconds, positive number)' };
+      }
+      const parsed = Number(next);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return { error: `--duration must be a positive number, got ${JSON.stringify(next)}` };
+      }
+      durationSeconds = parsed;
+      i += 1;
+      continue;
+    }
+    if (a.startsWith('--duration=')) {
+      const raw = a.slice('--duration='.length);
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return { error: `--duration must be a positive number, got ${JSON.stringify(raw)}` };
+      }
+      durationSeconds = parsed;
+      continue;
+    }
+    if (a.startsWith('--')) {
+      return { error: `unknown flag: ${a}` };
+    }
+    if (output === null) {
+      output = a;
+      continue;
+    }
+    return { error: `unexpected extra argument: ${a}` };
+  }
+  if (!output) {
+    return { error: 'output file path required' };
+  }
+  return { output, durationSeconds };
 }
 
 function runListen() {
@@ -99,33 +141,58 @@ async function main(argv) {
     return 1;
   }
 
-  const target = args[1];
-  if (!target) {
-    console.error('Error: output file path required');
-    return 1;
+  const tail = args.slice(1);
+  let outputPath;
+  let durationSeconds = null;
+
+  if (command === 'record') {
+    const parsed = parseRecordArgs(tail);
+    if (parsed.error) {
+      console.error(`Error: ${parsed.error}`);
+      return 1;
+    }
+    outputPath = path.resolve(parsed.output);
+    durationSeconds = parsed.durationSeconds;
+  } else {
+    const target = tail[0];
+    if (!target) {
+      console.error('Error: output file path required');
+      return 1;
+    }
+    outputPath = path.resolve(target);
   }
 
   const recorder = new AudioRecorder();
-  const outputPath = path.resolve(target);
-
   if (command === 'idle') {
     recorder.idleListen(outputPath);
   } else {
     recorder.start(outputPath);
   }
 
-  const shutdown = () => {
-    console.log('\nStopping...');
+  let durationTimer = null;
+  const shutdown = (reason) => {
+    if (durationTimer) {
+      clearTimeout(durationTimer);
+      durationTimer = null;
+    }
+    if (reason) console.log(`\n${reason}`);
     try {
       recorder.stop();
     } catch (e) {
       // recorder was not active; safe to ignore
     }
-    process.exit(0);
+    // Give the fileStream's 'close' event a tick to fire so the WAV header
+    // fixup can run before the process exits.
+    setTimeout(() => process.exit(0), 150);
   };
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => shutdown('Stopping...'));
+  process.on('SIGTERM', () => shutdown('Stopping...'));
+
+  if (durationSeconds !== null) {
+    console.log(`Recording for ${durationSeconds}s. Press Ctrl+C to stop early.`);
+    durationTimer = setTimeout(() => shutdown(`Reached ${durationSeconds}s, stopping.`), durationSeconds * 1000);
+  }
 
   return 0;
 }
@@ -141,4 +208,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { main, printHelp, runDevices, runListen };
+module.exports = { main, printHelp, runDevices, runListen, parseRecordArgs };
