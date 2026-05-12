@@ -52,10 +52,39 @@ describe('AudioRecorder', () => {
     expect(custom.options.channels).toBe(1);
   });
 
-  test('start() opens write stream and begins recording', () => {
+  test('start() opens write stream and begins recording in WAV mode', () => {
     expect(() => recorder.start('test.wav')).not.toThrow();
     expect(fs.createWriteStream).toHaveBeenCalledWith('test.wav');
-    expect(recorderLib.record).toHaveBeenCalledWith(recorder.options);
+    expect(recorderLib.record).toHaveBeenCalledWith(
+      expect.objectContaining({ ...recorder.options, audioType: 'wav' }),
+    );
+    expect(recorderLib.__lastRecording.__stream.pipe).toHaveBeenCalled();
+  });
+
+  test('start() registers a stream error handler that closes the file on error', () => {
+    recorder.start('test.wav');
+    const stream = recorderLib.__lastRecording.__stream;
+    const errorReg = stream.on.mock.calls.find(([event]) => event === 'error');
+    expect(errorReg).toBeDefined();
+
+    const fileStream = recorder.fileStream;
+    errorReg[1](new Error('boom'));
+    expect(recorder.recording).toBeNull();
+    expect(recorder.fileStream).toBeNull();
+    expect(fileStream.end).toHaveBeenCalled();
+  });
+
+  test('start() stream error after stop() stays silent and is a no-op', () => {
+    recorder.start('test.wav');
+    const stream = recorderLib.__lastRecording.__stream;
+    const errorReg = stream.on.mock.calls.find(([event]) => event === 'error');
+    expect(errorReg).toBeDefined();
+
+    recorder.stop();
+    const fsEndCalls = recorder.fileStream;
+    expect(fsEndCalls).toBeNull();
+
+    expect(() => errorReg[1](new Error('post-stop'))).not.toThrow();
   });
 
   test('start() throws when already recording', () => {

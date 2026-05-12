@@ -21,8 +21,19 @@ class AudioRecorder {
     }
 
     this.fileStream = fs.createWriteStream(outputPath);
-    this.recording = recorder.record(this.options);
-    this.recording.stream().pipe(this.fileStream);
+    this.recording = recorder.record({ ...this.options, audioType: 'wav' });
+    const stream = this.recording.stream();
+    stream.pipe(this.fileStream);
+    stream.on('error', (err) => {
+      // Intentional stop() nulls this.recording before sox's error fires.
+      if (!this.recording) return;
+      console.error('Record stream error:', err);
+      this.recording = null;
+      if (this.fileStream) {
+        try { this.fileStream.end(); } catch (_) { /* already closed */ }
+        this.fileStream = null;
+      }
+    });
 
     console.log('Recording started to', outputPath);
   }
@@ -60,10 +71,24 @@ class AudioRecorder {
       this.fileStream = fs.createWriteStream(outputPath, { flags: 'a' });
       this.recording = recorder.record({
         ...this.options,
+        audioType: 'wav',
         threshold: 0.5,
         silence: '1.0'
       });
-      this.recording.stream().pipe(this.fileStream);
+      const stream = this.recording.stream();
+      stream.pipe(this.fileStream);
+      stream.on('error', (err) => {
+        // If stop() cleared this.recording, the error came from an intentional
+        // kill -- stay quiet and let the shutdown path do its thing.
+        if (!this.recording) return;
+        console.error('Idle-listen stream error:', err);
+        this.idle = false;
+        this.recording = null;
+        if (this.fileStream) {
+          try { this.fileStream.end(); } catch (_) { /* already closed */ }
+          this.fileStream = null;
+        }
+      });
 
       this.recording.on('end', () => {
         console.log('Silence detected, rotating chunk');

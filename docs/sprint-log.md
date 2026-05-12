@@ -158,3 +158,24 @@ Next: MS-1 — sox dependency probe. After that the track proceeds linearly thro
   - The patch installs itself via `require.cache` mutation. If a future tool loads `node-record-lpcm16` BEFORE `src/audioRecorder.js`, the patch will be skipped silently. Tests are unaffected because they mock the library
   - SoX 14.4.2 reports the mic at 48000 Hz native; sox auto-resamples to the requested 16000 Hz. CPU cost is negligible at these rates
 - Why: this is the first sprint that proves audio actually flows. Everything after this assumes the pipeline works -- finding the Windows `--default-device` mismatch now, in a sprint dedicated to "prove the input works", saves the next 5 mini-sprints from re-discovering the same bug
+
+## Sprint 14 (MS-4): WAV Output From start() (Completed)
+- `AudioRecorder.start()` now explicitly requests `audioType: 'wav'` from the recorder (instead of relying on the library's implicit default). Sox writes WAV-framed bytes to stdout, Node pipes them to the requested file. Result: `node src/index.js record out.wav` produces a real .wav file
+- Added `stream.on('error', ...)` handlers to both `start()` and `idleListen()`, mirroring the intentional-stop-quiet pattern introduced for `listen()` in MS-3. This closes the unhandled-error footgun called out as a known limitation in Sprint 13
+- Added `tools/smoke-record.js`: programmatic real-hardware validator. Records for N ms via `start()`, calls `recorder.stop()` (not SIGINT, so sox shuts down cleanly), then validates the resulting file: walks the RIFF chunk list to find the `data` chunk, runs `sox <file> -n stat` to confirm the bytes are parseable PCM, and prints a single JSON result line
+- Tests added/updated in `tests/audioRecorder.test.js`:
+  - `start()` now asserts `audioType: 'wav'` and that the stream's `.pipe()` was invoked
+  - New: `start()` registers a stream error handler that closes the file on error and clears state
+  - New: post-stop stream errors are silent no-ops (mirrors the intentional-stop pattern)
+- Files modified: `src/audioRecorder.js`, `tests/audioRecorder.test.js`, `docs/sprint-log.md`, regenerated HTML mirrors
+- Files added: `tools/smoke-record.js`
+- Validation:
+  - `npm test` -- 41/41 passing across 4 suites (39 -> 41 with 2 new error-handler tests)
+  - `node tools/smoke-record.js .\smoke-record.wav 2500` -- produced a 65,536-byte WAV; `sox stat` parsed it as 32,746 samples / 2.046 seconds / max amplitude 0.066 / RMS 0.013 with rough frequency ~760 Hz
+  - First 12 bytes of the file: `52 49 46 46 24 F0 FF 7F 57 41 56 45` -- canonical `RIFF...WAVE` magic
+  - `Get-Process sox` after the run -- empty
+- Known limitations:
+  - The WAV header's RIFF and `data` chunk-size fields are written by sox at the start of the stream with a 2 GiB placeholder, because sox cannot seek back to a pipe to update them after the fact. The file is structurally valid and lenient players (sox itself, VLC, Audacity, Windows Media Player, Groove) accept it without issue, but strict parsers may reject. A follow-up sprint can add an `fs.openSync`-based header-fixup helper, or this naturally resolves once MS-5 introduces sox's own duration termination
+  - `idleListen()` got the same error handler but its single-file append behavior is still broken for WAV (multiple back-to-back headers per file). MS-6 owns the per-chunk rolling file rewrite that makes idle mode produce playable files
+  - The CLI `record` subcommand still relies on Ctrl+C for termination, which on Windows can race sox's shutdown. The smoke tool bypasses this by calling `recorder.stop()` directly; MS-5 introduces `--duration` for the CLI
+- Why: half of the user's stated goal is "recording working". This sprint produces a file that contains real audible content with a valid RIFF/WAVE header that sox itself round-trips through `stat`. Combined with MS-3, the listen-then-record demonstration is now end-to-end functional on this machine

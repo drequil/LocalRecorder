@@ -225,6 +225,34 @@
 </li>
 <li>Why: this is the first sprint that proves audio actually flows. Everything after this assumes the pipeline works -- finding the Windows <code>--default-device</code> mismatch now, in a sprint dedicated to &quot;prove the input works&quot;, saves the next 5 mini-sprints from re-discovering the same bug</li>
 </ul>
+<h2>Sprint 14 (MS-4): WAV Output From start() (Completed)</h2>
+<ul>
+<li><code>AudioRecorder.start()</code> now explicitly requests <code>audioType: &#39;wav&#39;</code> from the recorder (instead of relying on the library&#39;s implicit default). Sox writes WAV-framed bytes to stdout, Node pipes them to the requested file. Result: <code>node src/index.js record out.wav</code> produces a real .wav file</li>
+<li>Added <code>stream.on(&#39;error&#39;, ...)</code> handlers to both <code>start()</code> and <code>idleListen()</code>, mirroring the intentional-stop-quiet pattern introduced for <code>listen()</code> in MS-3. This closes the unhandled-error footgun called out as a known limitation in Sprint 13</li>
+<li>Added <code>tools/smoke-record.js</code>: programmatic real-hardware validator. Records for N ms via <code>start()</code>, calls <code>recorder.stop()</code> (not SIGINT, so sox shuts down cleanly), then validates the resulting file: walks the RIFF chunk list to find the <code>data</code> chunk, runs <code>sox &lt;file&gt; -n stat</code> to confirm the bytes are parseable PCM, and prints a single JSON result line</li>
+<li>Tests added/updated in <code>tests/audioRecorder.test.js</code>:<ul>
+<li><code>start()</code> now asserts <code>audioType: &#39;wav&#39;</code> and that the stream&#39;s <code>.pipe()</code> was invoked</li>
+<li>New: <code>start()</code> registers a stream error handler that closes the file on error and clears state</li>
+<li>New: post-stop stream errors are silent no-ops (mirrors the intentional-stop pattern)</li>
+</ul>
+</li>
+<li>Files modified: <code>src/audioRecorder.js</code>, <code>tests/audioRecorder.test.js</code>, <code>docs/sprint-log.md</code>, regenerated HTML mirrors</li>
+<li>Files added: <code>tools/smoke-record.js</code></li>
+<li>Validation:<ul>
+<li><code>npm test</code> -- 41/41 passing across 4 suites (39 -&gt; 41 with 2 new error-handler tests)</li>
+<li><code>node tools/smoke-record.js .\smoke-record.wav 2500</code> -- produced a 65,536-byte WAV; <code>sox stat</code> parsed it as 32,746 samples / 2.046 seconds / max amplitude 0.066 / RMS 0.013 with rough frequency ~760 Hz</li>
+<li>First 12 bytes of the file: <code>52 49 46 46 24 F0 FF 7F 57 41 56 45</code> -- canonical <code>RIFF...WAVE</code> magic</li>
+<li><code>Get-Process sox</code> after the run -- empty</li>
+</ul>
+</li>
+<li>Known limitations:<ul>
+<li>The WAV header&#39;s RIFF and <code>data</code> chunk-size fields are written by sox at the start of the stream with a 2 GiB placeholder, because sox cannot seek back to a pipe to update them after the fact. The file is structurally valid and lenient players (sox itself, VLC, Audacity, Windows Media Player, Groove) accept it without issue, but strict parsers may reject. A follow-up sprint can add an <code>fs.openSync</code>-based header-fixup helper, or this naturally resolves once MS-5 introduces sox&#39;s own duration termination</li>
+<li><code>idleListen()</code> got the same error handler but its single-file append behavior is still broken for WAV (multiple back-to-back headers per file). MS-6 owns the per-chunk rolling file rewrite that makes idle mode produce playable files</li>
+<li>The CLI <code>record</code> subcommand still relies on Ctrl+C for termination, which on Windows can race sox&#39;s shutdown. The smoke tool bypasses this by calling <code>recorder.stop()</code> directly; MS-5 introduces <code>--duration</code> for the CLI</li>
+</ul>
+</li>
+<li>Why: half of the user&#39;s stated goal is &quot;recording working&quot;. This sprint produces a file that contains real audible content with a valid RIFF/WAVE header that sox itself round-trips through <code>stat</code>. Combined with MS-3, the listen-then-record demonstration is now end-to-end functional on this machine</li>
+</ul>
 
 </body>
 </html>
