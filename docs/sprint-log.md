@@ -285,3 +285,41 @@ Next: MS-1 — sox dependency probe. After that the track proceeds linearly thro
   - The format contract isn't enforced on non-Windows platforms beyond what `node-record-lpcm16` itself does; if upstream changes its defaults, the macOS/Linux paths would drift. Mitigation: the smoke validator catches drift on any platform. Future MS-7.x: replace the upstream sox recorder on macOS/Linux too (we already do it on Windows for `--default-device` reasons), so the contract is enforced end-to-end
   - `WHISPER_AUDIO_FORMAT` does not include `audioType` because the listen path requires `'raw'` while start/idle require `'wav'`. The contract is about the **sample format**, not the **wire format**
 - Why: until now, "we record 16 kHz mono 16-bit signed PCM" was an emergent property of three files happening to agree. Now it's a single named contract that downstream transcription code can `require()` directly. When T-1 lands, the whisper.cpp invocation will pull this same constant for its `-ar 16000 -ac 1` arguments, guaranteeing zero resampling and zero format mismatch debugging
+
+## Sprint 19 (MS-8): Chunk Metadata Sidecars (Completed)
+- Each idle-mode WAV now gets a companion `<basename>.json` sidecar written into the same directory after the chunk's WAV header is finalized. Downstream tooling (Whisper transcription, search index, heat trend analysis, human review UI) can read this without opening the audio
+- Schema v1, exported as `SIDECAR_SCHEMA_VERSION` from `src/chunkSidecar.js`:
+  ```json
+  {
+    "version": 1,
+    "wav": "chunk-20260512-082832-594.wav",
+    "start": "2026-05-12T13:28:32.594Z",
+    "end":   "2026-05-12T13:28:40.610Z",
+    "durationMs": 7679,
+    "audio": { "sampleRate": 16000, "channels": 1, "bitDepth": 16, "encoding": "signed-integer" },
+    "peak":   0.00238,
+    "peakDb": -52.47,
+    "bytes":  245760
+  }
+  ```
+- `durationMs` is **derived from the audio payload**, not wall clock: `frames = (fileSize - dataPayloadOffset) / (channels * bytesPerSample); durationMs = round((frames / sampleRate) * 1000)`. This means it agrees exactly with `sox stat`'s reported length (no sox startup latency slippage in the metadata), while `start`/`end` capture the wall-clock window for traceability
+- New pure helper modules so the heavy logic is testable without sox or fs:
+  - `src/peakAccumulator.js`: `PeakAccumulator({ skipBytes })` tracks running max int16-LE peak across a stream of buffers, with an optional prefix-skip so the 44-byte WAV header doesn't contaminate the peak (header bytes interpreted as int16 would register ~58% of full scale)
+  - `src/chunkSidecar.js`: `buildSidecar({ ... })` returns the schema-v1 object; `writeSidecar(wavPath, payload)` writes `<basename>.json` and returns the path; plus `sidecarPathFor` and `audioDurationMs` exposed for downstream use
+- Wired into `AudioRecorder.idleListen` with minimal blast radius: `_attachFinalize` now takes an optional `sidecar = { chunkStart, peakAcc, format }` arg. When supplied, after the WAV header fixup it builds and writes the sidecar. When absent (the `start()` path), the finalizer behaves exactly as before. A `peakAcc.push()` call is attached to the sox stream's `'data'` event in parallel with `stream.pipe(fileStream)` — both consume the stream in flowing mode without interfering with each other (modern Node streams)
+- `tools/smoke-idle.js` now reads each chunk's sidecar, validates the schema (required fields present, `version === 1`, `wav` matches the file name), and includes the parsed sidecar in the JSON output. Smoke `ok: true` now requires both wav validity AND sidecar validity
+- Tests added (14 new):
+  - `tests/peakAccumulator.test.js` (6): zero baseline, running max across pushes, header skip within one push, header skip across multiple pushes, sub-int16 buffer tolerance, negative skipBytes rejection
+  - `tests/chunkSidecar.test.js` (8): `sidecarPathFor`, `audioDurationMs` for 16k mono 16-bit and 48k stereo 24-bit, edge cases (file <= header, invalid rate/channels), `buildSidecar` shape match, ISO-string pass-through, `writeSidecar` real-fs round trip
+- Files added: `src/peakAccumulator.js`, `src/chunkSidecar.js`, `tests/peakAccumulator.test.js`, `tests/chunkSidecar.test.js`
+- Files modified: `src/audioRecorder.js`, `tools/smoke-idle.js`, `docs/sprint-log.md`, `docs/sprint-plan.md`, regenerated HTML mirrors
+- Validation:
+  - `npm test` -- 82/82 passing across 8 suites (68 -> 82 with 14 new tests)
+  - `SMOKE_IDLE_THRESHOLD=0.01 node tools/smoke-idle.js` -- exit 0, 1 chunk with full sidecar: `durationMs: 7679` matches `sox stat`'s `Length 7.678625` exactly; `peak: 0.00238` matches `sox stat`'s `Maximum amplitude 0.002228` within rounding (different averaging strategies); sidecar schema validation `ok: true`
+  - `node tools/smoke-idle.js` (default threshold, quiet room) -- exit 0, 0 chunks, no leftover .wav or .json
+- Known limitations:
+  - **No sidecar for `start()` recordings.** Single-file recordings via `record` don't get a sidecar. MS-8.x or T-2 should fold this in when transcription begins consuming individual files. Trivially additive: pass the same sidecar options through `_attachFinalize` in `start()`
+  - **Peak is derived from raw stream bytes**, not from a properly-parsed WAV data chunk. With `skipBytes: 44` we assume canonical header size. If sox ever emits a non-44-byte header (e.g. with a `LIST` info chunk), the first few "samples" would actually be header bytes. Today our format never produces this; the smoke validator would catch a drift via the `header.dataOffset` field
+  - **Sidecar writes are synchronous (`fs.writeFileSync`).** Acceptable at chunk rotation rates (every few seconds at most); becomes a stutter risk only at sub-second rotation, which the sox silence detector won't produce under default settings
+  - **No back-fill for already-written chunks.** If sidecar writing fails (disk full, permission), the chunk's WAV is preserved but the sidecar is missing. A separate "scan directory and regenerate missing sidecars" tool is future work
+- Why: this closes the eight-mini-sprint capture track. The pipeline now produces (1) playable WAVs at the Whisper format, (2) one file per silence-delimited burst, (3) a sidecar JSON capturing everything downstream needs to know about that chunk without reading the audio. The next track (Phase 4 / transcription) can begin with no further capture-side work required

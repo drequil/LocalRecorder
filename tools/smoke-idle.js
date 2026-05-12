@@ -15,6 +15,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const AudioRecorder = require('../src/audioRecorder');
+const { sidecarPathFor, SIDECAR_SCHEMA_VERSION } = require('../src/chunkSidecar');
 
 const outputDir = path.resolve(
   process.argv[2] || path.join(os.tmpdir(), `localrecorder-smoke-idle-${process.pid}`),
@@ -93,6 +94,21 @@ setTimeout(() => {
       const dataSizeMatchesFile = header.ok
         ? header.dataSize === stat.size - header.dataOffset
         : false;
+      const sidecarPath = sidecarPathFor(filePath);
+      let sidecar = { ok: false, reason: 'not found' };
+      try {
+        const raw = fs.readFileSync(sidecarPath, 'utf8');
+        const parsed = JSON.parse(raw);
+        const required = ['version', 'wav', 'start', 'end', 'durationMs', 'audio', 'peak', 'peakDb', 'bytes'];
+        const missing = required.filter((k) => !(k in parsed));
+        sidecar = {
+          ok: missing.length === 0 && parsed.version === SIDECAR_SCHEMA_VERSION && parsed.wav === name,
+          missing,
+          parsed,
+        };
+      } catch (err) {
+        sidecar = { ok: false, reason: err.message };
+      }
       return {
         name,
         fileSize: stat.size,
@@ -100,18 +116,20 @@ setTimeout(() => {
         dataSizeMatchesFile,
         soxStatExitCode: soxStat.exitCode,
         soxStatExcerpt: soxStat.stderrExcerpt,
+        sidecar,
       };
     });
 
     const allHeadersOk = chunks.every((c) => c.header.ok);
     const allFixed = chunks.every((c) => c.dataSizeMatchesFile);
     const allSoxOk = chunks.every((c) => c.soxStatExitCode === 0);
+    const allSidecarsOk = chunks.every((c) => c.sidecar.ok);
 
     // No chunks is a valid outcome in a quiet room: sox waited for audio above
     // the threshold and the empty-chunk cleanup in stop() removed the placeholder.
     // What we really validate is "no chunks survived that aren't structurally OK."
     const result = {
-      ok: allHeadersOk && allFixed && allSoxOk,
+      ok: allHeadersOk && allFixed && allSoxOk && allSidecarsOk,
       outputDir,
       durationMs,
       thresholdPercent,

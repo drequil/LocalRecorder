@@ -38,7 +38,7 @@ Listening before recording, for three reasons:
 | MS-5.1 | Sox-side duration trim (optional) | Captured audio length matches `--duration` to within 100 ms (compensates the ~400 ms Windows startup latency) | optional |
 | MS-6 | Rolling idle chunks | `idle <dir>` writes timestamped per-silence WAV files in `<dir>` | ✅ |
 | MS-7 | Whisper-aligned defaults | Default capture is 16 kHz mono 16-bit signed PCM in WAV | ✅ |
-| MS-8 | Chunk metadata sidecars | Each idle-mode WAV gets a sidecar `.json` with start, end, peak | next |
+| MS-8 | Chunk metadata sidecars | Each idle-mode WAV gets a sidecar `.json` with start, end, peak | ✅ |
 
 Eight mini-sprints; each should be ~30–90 minutes of work. After MS-3 you can demo "listening". After MS-4 you can demo "recording". After MS-8 the audio capture pipeline is ready to hand off to a transcription sprint.
 
@@ -135,19 +135,11 @@ Eight mini-sprints; each should be ~30–90 minutes of work. After MS-3 you can 
 - **Outcome:** `WHISPER_AUDIO_FORMAT = { sampleRate: 16000, channels: 1, bitDepth: 16, encoding: 'signed-integer' }` exported (frozen) from `src/audioRecorder.js`. Constructor defaults spread it. `src/recorderPatch.js` honors `bitDepth`/`encoding` options. `tools/smoke-record.js` parses the WAV `fmt ` chunk and asserts every field matches the contract.
 - **Realized acceptance criteria:** smoke-record reports `formatCode: 1 (PCM), channels: 1, sampleRate: 16000, byteRate: 32000, blockAlign: 2, bitsPerSample: 16`, and `whisperFormatMatch.ok: true`.
 
-### MS-8 — Chunk metadata sidecars
+### MS-8 — Chunk metadata sidecars (Completed in Sprint 19)
 
-- **Goal:** for each idle-mode WAV file, write a companion `.json` capturing start ISO time, end ISO time, duration ms, and peak amplitude.
-- **Touches:** `src/audioRecorder.js` (instrument the chunk lifecycle), tests, optional new helper module.
-- **Steps:**
-  1. On chunk start, record `chunkStart = new Date()`.
-  2. Tap the audio stream to compute running peak (reuse code from MS-3).
-  3. On chunk end, write `<chunk-name>.json` with `{ start, end, durationMs, peak }`.
-  4. Tests assert sidecar shape using the mock `fs.writeFile`/`createWriteStream`.
-- **Validation:** record an idle session, open one of the JSON sidecars, confirm values look sane (duration matches the WAV's, peak between 0 and 1).
-- **Acceptance criteria:** every WAV has a matching JSON; durations agree within 100 ms; peak ∈ [0,1].
-- **Rollback:** remove the instrumentation; WAVs continue to work standalone.
-- **Risk:** synchronous JSON writes on every chunk could stutter under heavy load. Move to async writes if observed; not a concern at the volumes expected here.
+- **Goal:** for each idle-mode WAV file, write a companion `.json` capturing chunk start, end, audio-derived duration, peak amplitude, peak dBFS, byte count, and audio format.
+- **Outcome:** schema v1 exported from `src/chunkSidecar.js`. Reuses MS-3's `peak16LE` via a new `PeakAccumulator` that skips the 44-byte WAV header prefix. Wired into `idleListen` via the existing `_attachFinalize` path so the WAV header fixup and the sidecar write happen in the same `'close'` callback.
+- **Realized acceptance criteria:** end-to-end smoke shows `durationMs` matches `sox stat`'s reported length to the millisecond; peak agrees with sox's max amplitude within rounding; every produced WAV has a sidecar with all required fields and `version === 1`.
 
 ---
 

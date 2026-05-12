@@ -3,6 +3,10 @@ const recorder = require('node-record-lpcm16');
 const fs = require('fs');
 const path = require('path');
 const { finalizeWavHeader } = require('./wavHeaderFix');
+const { PeakAccumulator } = require('./peakAccumulator');
+const { buildSidecar, writeSidecar } = require('./chunkSidecar');
+
+const WAV_HEADER_BYTES = 44; // canonical 44-byte preamble for our format
 
 // Single source of truth for the capture format we hand off to the transcription
 // stage. Whisper expects 16 kHz mono 16-bit signed PCM; producing anything else
@@ -45,10 +49,17 @@ class AudioRecorder {
   // Attach a one-shot finalizer that rewrites the WAV header's RIFF + data
   // chunk sizes once the underlying fs.WriteStream finishes flushing. We also
   // remove zero-byte files here (sox didn't emit any audio before shutdown).
-  _attachFinalize(fileStream, filePath) {
+  //
+  // When `sidecar` is supplied (idle-chunk path), we additionally write a
+  // companion `<basename>.json` capturing chunk start/end timestamps, peak
+  // amplitude, audio format, and byte count. The sidecar is the MS-8 contract;
+  // downstream tooling (Whisper, search index, heat trend) reads this without
+  // touching the audio bytes.
+  _attachFinalize(fileStream, filePath, sidecar = null) {
     if (!fileStream || typeof fileStream.once !== 'function') return;
     if (typeof filePath !== 'string') return;
     fileStream.once('close', () => {
+      const closedAt = new Date();
       let size = -1;
       try {
         size = fs.statSync(filePath).size;
@@ -59,11 +70,30 @@ class AudioRecorder {
         try { fs.unlinkSync(filePath); } catch (_) { /* leave it */ }
         return;
       }
-      if (!/\.wav$/i.test(filePath)) return;
-      try {
-        finalizeWavHeader(filePath);
-      } catch (err) {
-        console.warn(`WAV header finalize skipped for ${filePath}: ${err.message}`);
+      let finalizeResult = null;
+      if (/\.wav$/i.test(filePath)) {
+        try {
+          finalizeResult = finalizeWavHeader(filePath);
+        } catch (err) {
+          console.warn(`WAV header finalize skipped for ${filePath}: ${err.message}`);
+        }
+      }
+      if (sidecar && sidecar.peakAcc && sidecar.format) {
+        try {
+          const payload = buildSidecar({
+            wavPath: filePath,
+            start: sidecar.chunkStart,
+            end: closedAt,
+            fileSize: finalizeResult ? finalizeResult.fileSize : size,
+            dataPayloadOffset: finalizeResult ? finalizeResult.dataPayloadOffset : WAV_HEADER_BYTES,
+            format: sidecar.format,
+            peak: sidecar.peakAcc.peak,
+            peakDb: sidecar.peakAcc.peakDb,
+          });
+          writeSidecar(filePath, payload);
+        } catch (err) {
+          console.warn(`Sidecar write skipped for ${filePath}: ${err.message}`);
+        }
       }
     });
   }
@@ -146,9 +176,15 @@ class AudioRecorder {
       if (!this.idle) return;
       const chunkPath = allocateChunkPath();
       this.chunks.push(chunkPath);
+      const chunkStart = new Date();
+      const peakAcc = new PeakAccumulator({ skipBytes: WAV_HEADER_BYTES });
       this.fileStream = fs.createWriteStream(chunkPath);
       this.fileStreamPath = chunkPath;
-      this._attachFinalize(this.fileStream, chunkPath);
+      this._attachFinalize(this.fileStream, chunkPath, {
+        chunkStart,
+        peakAcc,
+        format: this.options,
+      });
       this.recording = recorder.record({
         ...this.options,
         audioType: 'wav',
@@ -157,6 +193,7 @@ class AudioRecorder {
         silence: this.idleSilenceSeconds,
       });
       const stream = this.recording.stream();
+      stream.on('data', (chunk) => peakAcc.push(chunk));
       stream.pipe(this.fileStream);
       stream.on('error', (err) => {
         // If stop() cleared this.recording, the error came from an intentional
