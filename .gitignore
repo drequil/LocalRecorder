@@ -9,6 +9,10 @@ yarn-error.log*
 *.flac
 recordings/
 
+# Local-only binary install artifacts (e.g. whisper.cpp release zips, future
+# GPU runtimes, model archives). The project does not vendor binary deps.
+*.zip
+
 coverage/
 
 .DS_Store
