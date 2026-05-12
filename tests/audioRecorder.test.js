@@ -363,6 +363,173 @@ describe('AudioRecorder transcribe wiring', () => {
   });
 });
 
+describe('writeChunkMarkdownSibling / runWithMarkdown', () => {
+  const { writeChunkMarkdownSibling, runWithMarkdown } = require('../src/audioRecorder');
+  const os = require('os');
+  const path = require('path');
+  const realFs = jest.requireActual('fs');
+
+  let tmpdir;
+
+  beforeEach(() => {
+    tmpdir = realFs.mkdtempSync(path.join(os.tmpdir(), 'lr-md-sibling-'));
+  });
+  afterEach(() => {
+    realFs.rmSync(tmpdir, { recursive: true, force: true });
+  });
+
+  function makeSidecarOnDisk(stem) {
+    const sidecar = {
+      version: 1,
+      wav: `${stem}.wav`,
+      start: '2026-05-12T21:23:01.490Z',
+      end: '2026-05-12T21:23:13.523Z',
+      durationMs: 11519,
+      audio: { sampleRate: 16000, channels: 1, bitDepth: 16, encoding: 'signed-integer' },
+      peak: 0.5,
+      peakDb: -6,
+      bytes: 368640,
+    };
+    const jsonPath = path.join(tmpdir, `${stem}.json`);
+    realFs.writeFileSync(jsonPath, JSON.stringify(sidecar, null, 2) + '\n');
+    return { sidecar, jsonPath };
+  }
+
+  test('writeChunkMarkdownSibling produces a real .md when transcription succeeds', () => {
+    const stem = 'chunk-20260512-162301-489';
+    const wav = path.join(tmpdir, `${stem}.wav`);
+    realFs.writeFileSync(wav, Buffer.from('RIFF\0\0\0\0WAVE', 'binary'));
+    makeSidecarOnDisk(stem);
+
+    const mdPath = writeChunkMarkdownSibling({
+      wav,
+      transcript: 'Hello world.',
+      transcribeStatus: 'ok',
+      fsImpl: realFs,
+    });
+    expect(mdPath).toBe(path.join(tmpdir, `${stem}.md`));
+    expect(realFs.existsSync(mdPath)).toBe(true);
+    const md = realFs.readFileSync(mdPath, 'utf8');
+    expect(md).toMatch(/^# Chunk 2026-05-12 16:23:01\.489/);
+    expect(md).toContain('Hello world.');
+    expect(md).toContain('[' + `${stem}.txt` + '](' + `${stem}.txt` + ')');
+  });
+
+  test('writeChunkMarkdownSibling produces a failure-stub .md when transcription failed', () => {
+    const stem = 'chunk-20260512-162301-489';
+    const wav = path.join(tmpdir, `${stem}.wav`);
+    realFs.writeFileSync(wav, Buffer.from('RIFF\0\0\0\0WAVE', 'binary'));
+    makeSidecarOnDisk(stem);
+
+    const mdPath = writeChunkMarkdownSibling({
+      wav,
+      transcript: null,
+      transcribeStatus: 'failed',
+      transcribeError: 'whisper-cli exited with code 1',
+      fsImpl: realFs,
+    });
+    const md = realFs.readFileSync(mdPath, 'utf8');
+    expect(md).toContain('_Transcription unavailable: whisper-cli exited with code 1_');
+    expect(md).not.toContain('[' + `${stem}.txt`);
+  });
+
+  test('writeChunkMarkdownSibling falls back to a minimal sidecar stub when the .json is missing', () => {
+    const stem = 'chunk-X';
+    const wav = path.join(tmpdir, `${stem}.wav`);
+    realFs.writeFileSync(wav, Buffer.from('RIFF\0\0\0\0WAVE', 'binary'));
+    // No sidecar JSON on disk.
+    const mdPath = writeChunkMarkdownSibling({
+      wav,
+      transcribeStatus: 'pending',
+      fsImpl: realFs,
+    });
+    const md = realFs.readFileSync(mdPath, 'utf8');
+    expect(md).toContain('# Chunk chunk-X');
+    expect(md).toContain('_Transcription not attempted._');
+  });
+
+  test('runWithMarkdown writes .md on the success path and returns mdPath on the result', async () => {
+    const stem = 'chunk-20260512-162301-489';
+    const wav = path.join(tmpdir, `${stem}.wav`);
+    realFs.writeFileSync(wav, Buffer.from('RIFF\0\0\0\0WAVE', 'binary'));
+    makeSidecarOnDisk(stem);
+
+    const transcribeFn = jest.fn(async () => ({
+      text: 'Real transcript.',
+      model: 'm.bin',
+      wav,
+      binary: 'whisper-cli',
+      durationMs: 1,
+      // Pretend whisper already wrote the canonical .txt (no normalisation work needed).
+      txtPath: path.join(tmpdir, `${stem}.txt`),
+      exitCode: 0,
+    }));
+
+    const result = await runWithMarkdown({ wav, model: 'm.bin' }, { transcribeFn, fsImpl: realFs });
+    expect(result.mdPath).toBe(path.join(tmpdir, `${stem}.md`));
+    expect(realFs.existsSync(result.mdPath)).toBe(true);
+    expect(realFs.readFileSync(result.mdPath, 'utf8')).toContain('Real transcript.');
+  });
+
+  test('runWithMarkdown writes a failure-stub .md AND re-throws the underlying error', async () => {
+    const stem = 'chunk-20260512-162301-489';
+    const wav = path.join(tmpdir, `${stem}.wav`);
+    realFs.writeFileSync(wav, Buffer.from('RIFF\0\0\0\0WAVE', 'binary'));
+    makeSidecarOnDisk(stem);
+
+    const transcribeFn = jest.fn(async () => {
+      const e = new Error('simulated whisper failure');
+      throw e;
+    });
+
+    await expect(
+      runWithMarkdown({ wav, model: 'm.bin' }, { transcribeFn, fsImpl: realFs }),
+    ).rejects.toMatchObject({ message: 'simulated whisper failure' });
+
+    const mdPath = path.join(tmpdir, `${stem}.md`);
+    expect(realFs.existsSync(mdPath)).toBe(true);
+    expect(realFs.readFileSync(mdPath, 'utf8'))
+      .toContain('_Transcription unavailable: simulated whisper failure_');
+  });
+
+  test('runWithMarkdown does not let a .md write failure mask a successful transcription', async () => {
+    const stem = 'chunk-X';
+    const wav = path.join(tmpdir, `${stem}.wav`);
+    realFs.writeFileSync(wav, Buffer.from('RIFF\0\0\0\0WAVE', 'binary'));
+    makeSidecarOnDisk(stem);
+
+    const transcribeFn = jest.fn(async () => ({
+      text: 'ok',
+      model: 'm.bin',
+      wav,
+      binary: 'whisper-cli',
+      durationMs: 0,
+      txtPath: path.join(tmpdir, `${stem}.txt`),
+      exitCode: 0,
+    }));
+
+    // Wrap realFs with a writeFileSync that throws for .md paths only.
+    const fsWithBadMdWrite = {
+      ...realFs,
+      writeFileSync: (target, contents) => {
+        if (typeof target === 'string' && target.endsWith('.md')) {
+          throw new Error('disk full');
+        }
+        return realFs.writeFileSync(target, contents);
+      },
+    };
+
+    const result = await runWithMarkdown(
+      { wav, model: 'm.bin' },
+      { transcribeFn, fsImpl: fsWithBadMdWrite },
+    );
+    // mdPath ended up null because the write threw -- but the transcription
+    // result still flows through cleanly.
+    expect(result.mdPath).toBeNull();
+    expect(result.text).toBe('ok');
+  });
+});
+
 describe('defaultTranscribeRun (filename normalisation)', () => {
   const { defaultTranscribeRun } = require('../src/audioRecorder');
   const os = require('os');

@@ -227,7 +227,7 @@ Same shape as Phase 3A/3B: prove the foundation before integrating.
 | T-1 | Whisper.cpp dependency probe | `npm run transcribe:check` reports the resolved binary or a clean install message | ✅ |
 | T-2 | Transcribe a known-good WAV via CLI | `node src/index.js transcribe <file>` prints text from a single WAV | ✅ |
 | T-3 | Wire transcription into idle rotation | Each rotated chunk is auto-transcribed; transcript stored next to the WAV (sibling `<basename>.txt`); CLI shutdown drains the queue | ✅ |
-| T-4 | Per-chunk markdown persistence | `.md` per chunk combines transcript + sidecar metadata for human review | ⏳ |
+| T-4 | Per-chunk markdown persistence | `.md` per chunk combines transcript + sidecar metadata for human review; failure-stub `.md` when transcription fails | ✅ |
 | T-5 | Resilience: retries, skip empty, error handling | Transcription survives bad chunks, slow runs, and silent rooms | ⏳ |
 | T-6 | End-to-end "speak → see markdown update" demo | Documented full run from `idle` start to live `.md` updates | ⏳ |
 
@@ -270,7 +270,7 @@ Split into two mini-sprints since the queue was a reusable primitive worth its o
 - **Rollback:** revert the `transcribe` flag — capture still works exactly as it does today.
 - **Risk:** transcription falling behind capture in a long monologue. T-5 owns the fix; T-3 just observes the behavior honestly.
 
-### T-4 — Per-chunk markdown persistence
+### T-4 — Per-chunk markdown persistence (✅ Completed in Sprint 26)
 
 - **Goal:** alongside each chunk produce a `.md` file that combines the transcript with the sidecar metadata in a human-reviewable form. This is the artifact a user actually opens after a meeting.
 - **Touches:** new `src/chunkMarkdown.js` (pure formatter: `(sidecar, transcript) → markdown string`), `src/audioRecorder.js` (write `.md` in the same finalize path after the `.txt` lands), tests in `tests/chunkMarkdown.test.js`.

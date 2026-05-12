@@ -347,8 +347,8 @@
 <tr>
 <td>T-4</td>
 <td>Per-chunk markdown persistence</td>
-<td><code>.md</code> per chunk combines transcript + sidecar metadata for human review</td>
-<td>⏳</td>
+<td><code>.md</code> per chunk combines transcript + sidecar metadata for human review; failure-stub <code>.md</code> when transcription fails</td>
+<td>✅</td>
 </tr>
 <tr>
 <td>T-5</td>
@@ -409,7 +409,7 @@
 <li><p><strong>Risk:</strong> transcription falling behind capture in a long monologue. T-5 owns the fix; T-3 just observes the behavior honestly.</p>
 </li>
 </ul>
-<h3>T-4 — Per-chunk markdown persistence</h3>
+<h3>T-4 — Per-chunk markdown persistence (✅ Completed in Sprint 26)</h3>
 <ul>
 <li><strong>Goal:</strong> alongside each chunk produce a <code>.md</code> file that combines the transcript with the sidecar metadata in a human-reviewable form. This is the artifact a user actually opens after a meeting.</li>
 <li><strong>Touches:</strong> new <code>src/chunkMarkdown.js</code> (pure formatter: <code>(sidecar, transcript) → markdown string</code>), <code>src/audioRecorder.js</code> (write <code>.md</code> in the same finalize path after the <code>.txt</code> lands), tests in <code>tests/chunkMarkdown.test.js</code>.</li>

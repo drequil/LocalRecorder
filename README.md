@@ -132,9 +132,11 @@ node src/index.js idle [<directory>] [--name <label>] [--root <dir>] [--duration
                       [--transcribe] [--model <path>]
 # Per-silence WAV chunks plus JSON sidecars into a structured session directory.
 # With --transcribe, each chunk is auto-transcribed via whisper.cpp the moment
-# its WAV is finalised; the transcript is written next to the .wav as
-# <basename>.txt. Transcriptions run serially through an in-memory queue so two
-# long chunks don't fight for CPU.
+# its WAV is finalised; the transcript lands as <basename>.txt AND a human-
+# reviewable <basename>.md (metadata + transcript) is written next to the .wav.
+# Transcriptions run serially through an in-memory queue so two long chunks
+# don't fight for CPU. On failure, the .md is still written with a stub
+# explaining what went wrong.
 
 node src/index.js transcribe <file.wav> [--model <path>] [--json]
 # Transcribe one WAV via whisper.cpp. Prints the transcript text (or a JSON
@@ -171,9 +173,16 @@ By default both `record` and `idle` write under `./recordings/`, into a session 
 | `--model <path>` | idle / transcribe | path | Path to a whisper.cpp ggml model. Default: `./models/ggml-base.en.bin`. For `idle`, only used when `--transcribe` is also set; failing existence check before capture starts. |
 | `--json` | transcribe | flag | Emit a JSON payload (`{ text, model, wav, durationMs, binary, txtPath, version, versionLabel }`) instead of plain text. |
 
-### Sidecar JSON
+### Per-chunk artifacts
 
-Each WAV gets a matching `<basename>.json` sidecar (schema v1) with `{ version, wav, start, end, durationMs, audio, peak, peakDb, bytes }`. Empty placeholder chunks (sox waiting for audio that never arrived) are auto-deleted along with their sidecar slot.
+In `idle` mode each chunk produces:
+
+| File | Always | Description |
+|---|---|---|
+| `<basename>.wav` | yes | The captured audio (16 kHz mono 16-bit signed PCM). |
+| `<basename>.json` | yes | Sidecar metadata (schema v1): `{ version, wav, start, end, durationMs, audio, peak, peakDb, bytes }`. Empty placeholder chunks (sox waiting for audio that never arrived) are auto-deleted along with their sidecar slot. |
+| `<basename>.txt` | only with `--transcribe` | Verbatim whisper.cpp transcript. Empty file for silent / sub-threshold chunks (the transcript is genuinely empty, not missing). |
+| `<basename>.md` | only with `--transcribe` | Human-reviewable: heading with timestamp, metadata block, links to the three sibling files, transcript section. On transcription failure the `.md` is still written with a `_Transcription unavailable: <reason>_` stub so you never lose context for a chunk. |
 
 ### Example — leave it running for an hour
 

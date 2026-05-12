@@ -4,9 +4,10 @@ const fs = require('fs');
 const path = require('path');
 const { finalizeWavHeader } = require('./wavHeaderFix');
 const { PeakAccumulator } = require('./peakAccumulator');
-const { buildSidecar, writeSidecar } = require('./chunkSidecar');
+const { buildSidecar, writeSidecar, sidecarPathFor } = require('./chunkSidecar');
 const { transcribeFile, DEFAULT_MODEL_PATH } = require('./transcribe');
 const { createTranscribeQueue } = require('./transcribeQueue');
+const { formatChunkMarkdown, markdownPathFor } = require('./chunkMarkdown');
 
 const WAV_HEADER_BYTES = 44; // canonical 44-byte preamble for our format
 
@@ -53,6 +54,76 @@ async function defaultTranscribeRun({ wav, model }, { transcribeFn = transcribeF
   return { ...result, txtPath: canonical };
 }
 
+// T-4: Write a <basename>.md sibling next to the WAV combining sidecar
+// metadata with the transcript (when available) or a status stub. This runs
+// in the queue worker so a successful transcription publishes both .txt and
+// .md atomically from the user's point of view -- they appear as a pair.
+//
+// Best-effort: if reading the sidecar fails we fall back to a minimal
+// {wav-basename} stub rather than crashing the worker. Writing the .md is
+// itself wrapped in a try/catch by the caller (runWithMarkdown) so an
+// unwritable destination never causes the queue to think transcription
+// failed.
+function writeChunkMarkdownSibling({
+  wav,
+  transcript = null,
+  transcribeStatus = 'pending',
+  transcribeError = null,
+  fsImpl = fs,
+}) {
+  const sidecarPath = sidecarPathFor(wav);
+  let sidecar;
+  try {
+    sidecar = JSON.parse(fsImpl.readFileSync(sidecarPath, 'utf8'));
+  } catch (_) {
+    // Sidecar missing / unreadable -- formatter handles a minimal duck.
+    sidecar = { wav: path.basename(wav) };
+  }
+  const md = formatChunkMarkdown({
+    sidecar,
+    transcript,
+    transcribeStatus,
+    transcribeError,
+  });
+  const mdPath = markdownPathFor(wav);
+  fsImpl.writeFileSync(mdPath, md);
+  return mdPath;
+}
+
+// T-4: Compose the transcription work with the per-chunk .md write so the
+// queue worker produces .txt + .md as a unit. Always attempts the .md write,
+// even on transcription failure -- failure-stub markdown is still useful to
+// the user. The .md write itself is best-effort; if it throws we log but do
+// NOT mask the underlying transcription outcome.
+async function runWithMarkdown(job, { transcribeFn, fsImpl = fs } = {}) {
+  let transcribeResult = null;
+  let transcribeError = null;
+  try {
+    transcribeResult = await defaultTranscribeRun(job, { transcribeFn, fsImpl });
+  } catch (e) {
+    transcribeError = e;
+  }
+  let mdPath = null;
+  try {
+    mdPath = writeChunkMarkdownSibling({
+      wav: job.wav,
+      transcript: transcribeResult ? transcribeResult.text : null,
+      transcribeStatus: transcribeError ? 'failed' : 'ok',
+      transcribeError: transcribeError ? transcribeError.message : null,
+      fsImpl,
+    });
+  } catch (mdErr) {
+    console.warn(`[markdown failed] ${path.relative(process.cwd(), job.wav)}: ${mdErr.message}`);
+  }
+  if (transcribeError) {
+    // Decorate the thrown error with the .md path so onFailure can surface
+    // that the user has a stub to look at.
+    transcribeError.mdPath = mdPath;
+    throw transcribeError;
+  }
+  return { ...transcribeResult, mdPath };
+}
+
 class AudioRecorder {
   constructor(options = {}) {
     const {
@@ -90,17 +161,21 @@ class AudioRecorder {
     this.transcribeModel = transcribeModel;
     this.transcribeQueue = null;
     if (this.transcribe) {
-      const runFn = (job) => defaultTranscribeRun(job, { transcribeFn });
+      const runFn = (job) => runWithMarkdown(job, { transcribeFn });
       const logger = transcribeLogger || {
         onSuccess: (job, result) => {
-          if (result && result.txtPath) {
-            const rel = path.relative(process.cwd(), result.txtPath);
+          // Prefer announcing the .md (T-4's user-facing artifact); fall back
+          // to the .txt if the md write failed.
+          const announcePath = (result && result.mdPath) || (result && result.txtPath);
+          if (announcePath) {
+            const rel = path.relative(process.cwd(), announcePath);
             console.log(`[transcribed] ${rel}`);
           }
         },
         onFailure: (job, error) => {
           const rel = path.relative(process.cwd(), job.wav);
-          console.warn(`[transcribe failed] ${rel}: ${error.message}`);
+          const stubNote = error && error.mdPath ? ' (md stub written)' : '';
+          console.warn(`[transcribe failed] ${rel}: ${error.message}${stubNote}`);
         },
       };
       this.transcribeQueue = createTranscribeQueue({
@@ -369,3 +444,5 @@ module.exports = AudioRecorder;
 module.exports.defaultChunkFilename = defaultChunkFilename;
 module.exports.WHISPER_AUDIO_FORMAT = WHISPER_AUDIO_FORMAT;
 module.exports.defaultTranscribeRun = defaultTranscribeRun;
+module.exports.runWithMarkdown = runWithMarkdown;
+module.exports.writeChunkMarkdownSibling = writeChunkMarkdownSibling;

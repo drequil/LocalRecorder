@@ -713,6 +713,60 @@ Then re-run: npm run transcribe:check
 </li>
 <li>Why: chunks rotate as soon as silence is detected, but until this sprint there was no consumer for them on the transcription side. By landing the integration with the queue + the async shutdown + the upfront model check together, <code>idle --transcribe</code> is now a one-flag workflow: start it, walk away, come back to a directory of <code>.wav</code>+<code>.json</code>+<code>.txt</code> triples per silence interval. Everything Phase 4 needs from here on (T-4 indexing, T-5 hardening, T-6 docs) builds on this rather than on a half-wired stub</li>
 </ul>
+<h2>Sprint 26 (T-4): Per-chunk markdown persistence (Completed)</h2>
+<ul>
+<li>Each idle-mode chunk now produces a <code>&lt;basename&gt;.md</code> sibling alongside the <code>.wav</code> / <code>.json</code> / <code>.txt</code>. The <code>.md</code> is the user-facing artifact: a heading with human-readable timestamp, a metadata block (duration / peak / bytes / start / end), file links to the three sibling artifacts, and the transcript verbatim. On transcription failure, the same <code>.md</code> is still written but with a <code>_Transcription unavailable: &lt;reason&gt;_</code> stub in the transcript section -- the user always has a markdown artifact to open per chunk</li>
+<li>New <code>src/chunkMarkdown.js</code> (pure formatter, no fs / no whisper deps):<ul>
+<li><code>formatChunkMarkdown({ sidecar, transcript, transcribeStatus, transcribeError, txtBasename }) -&gt; string</code>. <code>transcribeStatus</code> is one of <code>ok</code> / <code>failed</code> / <code>empty</code> / <code>skipped</code> / <code>pending</code>; the formatter renders the appropriate transcript section stub for each</li>
+<li><code>markdownPathFor(wavPath)</code> -- mirrors <code>sidecarPathFor</code> from <code>chunkSidecar.js</code>. Returns <code>&lt;dir&gt;/&lt;basename&gt;.md</code></li>
+<li>Helpers <code>formatDurationSeconds</code> (2dp &lt;10 s, 1dp &lt;60 s, <code>Xm Ys</code> thereafter), <code>formatPeak</code> (ASCII-minus dBFS + linear in parens), <code>formatNumberWithSeparator</code> (locale-neutral thousand spaces -- bytes never fractional), <code>parseChunkTimestamp</code> (matches the <code>chunk-YYYYMMDD-HHMMSS-mmm[-N]</code> stem and renders the duplicate suffix as <code>#N</code> in the heading)</li>
+</ul>
+</li>
+<li><code>src/audioRecorder.js</code>:<ul>
+<li>New helper <code>writeChunkMarkdownSibling({ wav, transcript, transcribeStatus, transcribeError, fsImpl })</code>: reads the sidecar JSON from disk (or falls back to a minimal stub if the JSON is missing), formats the markdown, writes the <code>.md</code>. Exported separately for unit testing</li>
+<li>New worker wrapper <code>runWithMarkdown(job, { transcribeFn, fsImpl })</code>: calls <code>defaultTranscribeRun</code>, then writes the <code>.md</code> on BOTH the success and failure paths, then re-throws the underlying transcription error (if any) so the queue&#39;s <code>onFailure</code> still fires. A <code>.md</code> write failure does NOT mask a successful transcription -- it&#39;s logged via <code>console.warn</code> and <code>mdPath</code> is reported as <code>null</code> on the result</li>
+<li>The constructor&#39;s <code>runFn</code> now uses <code>runWithMarkdown</code> (was <code>defaultTranscribeRun</code>). Default <code>onSuccess</code> log line announces the <code>.md</code> (was the <code>.txt</code>); <code>onFailure</code> appends <code>(md stub written)</code> when the stub landed successfully. Decoration via <code>error.mdPath</code> keeps the queue API uncluttered</li>
+</ul>
+</li>
+<li>Tests added (38 new across two files; <strong>205 → 243</strong>, 14 → 15 suites):<ul>
+<li><code>tests/chunkMarkdown.test.js</code> (32 tests):<ul>
+<li><strong>Helpers (15):</strong> <code>formatNumberWithSeparator</code> (3 cases including non-finite), <code>formatDurationSeconds</code> (4 buckets including the 9999→&quot;10.00 s&quot; rounding boundary documented inline), <code>formatPeak</code> (5: ASCII minus, dBFS with parens, clipping, missing peak, non-finite), <code>parseChunkTimestamp</code> (3: canonical, duplicate suffix, non-chunk)</li>
+<li><strong><code>markdownPathFor</code> (2):</strong> preserves directory, handles uppercase <code>.WAV</code></li>
+<li><strong>Happy path (3):</strong> full render with all sections, fallback heading for non-chunk basenames, <code>#N</code> disambiguator for duplicate-suffix chunks</li>
+<li><strong>Failure / empty / pending (6):</strong> failed transcription with explicit error, failed without explicit error (falls back to &quot;unknown error&quot;), empty/whitespace transcript renders empty-speech stub, pending status, skipped status with reason, explicit <code>txtBasename</code> overrides the automatic suppression</li>
+<li><strong>Argument validation (3):</strong> throws on missing sidecar, throws on non-object sidecar, tolerates a sidecar missing optional <code>bytes</code> / <code>start</code> / <code>end</code></li>
+<li><strong>Structural sanity (3):</strong> exactly one H1 at top, exactly one <code>## Transcript</code> H2, no code fences (so no risk of unbalanced fences from transcript content)</li>
+</ul>
+</li>
+<li><code>tests/audioRecorder.test.js</code> (6 new in a new <code>describe(&#39;writeChunkMarkdownSibling / runWithMarkdown&#39;)</code> block):<ul>
+<li>Success path: <code>writeChunkMarkdownSibling</code> writes a real <code>.md</code> with the transcript and the <code>.txt</code> file link</li>
+<li>Failure path: writes the failure-stub <code>.md</code> without the <code>.txt</code> link</li>
+<li>Missing sidecar: falls back to a <code>{ wav: basename(wav) }</code> stub so the <code>.md</code> still has identifying info</li>
+<li><code>runWithMarkdown</code> success: writes <code>.md</code>, returns <code>mdPath</code> on the result</li>
+<li><code>runWithMarkdown</code> failure: writes <code>.md</code> stub AND re-throws the original error (<code>rejects.toMatchObject</code>)</li>
+<li><code>runWithMarkdown</code> resilience: a failing <code>writeFileSync</code> for <code>.md</code> paths doesn&#39;t mask a successful transcription; result still flows through with <code>mdPath: null</code></li>
+</ul>
+</li>
+</ul>
+</li>
+<li>Files added: <code>src/chunkMarkdown.js</code>, <code>tests/chunkMarkdown.test.js</code></li>
+<li>Files modified: <code>src/audioRecorder.js</code>, <code>tests/audioRecorder.test.js</code>, <code>README.md</code>, <code>docs/sprint-plan.md</code>, <code>docs/sprint-log.md</code>, regenerated HTML mirrors</li>
+<li>Validation:<ul>
+<li><code>node --check src/chunkMarkdown.js src/audioRecorder.js</code> clean</li>
+<li><code>npm test</code> -- 243/243 passing across 15 suites (+38 new)</li>
+<li><strong>End-to-end smoke:</strong> <code>idle &lt;tmp&gt; --threshold 0.01 --silence 2 --transcribe --duration 12</code>. Produced one chunk with the full quartet: <code>chunk-20260512-163621-086.wav</code> (361 KB), <code>.json</code> (355 B), <code>.md</code> (552 B), <code>.txt</code> (117 B). The <code>.md</code> rendered cleanly with the H1 heading, metadata block, three file links, and the transcript -- the user spoke to the mic (&quot;Right, it&#39;s listening pretty good, mama. And it&#39;s doing crazy good work for transcription...&quot;) and the markdown opened directly in a text editor with no further processing. <code>[transcribed]</code> log now points at the <code>.md</code> as planned</li>
+</ul>
+</li>
+<li>Known limitations / design notes:<ul>
+<li><strong>Markdown writes happen only when <code>transcribe: true</code>.</strong> The <code>.md</code> is hooked into the queue worker, so capture without transcription still produces only the <code>.wav</code> + <code>.json</code> pair. T-4 acceptance says &quot;every WAV has a matching .md after the chunk closes&quot; -- interpreted here as &quot;every transcription-mode WAV&quot;, which matches the goal phrasing &quot;combines the transcript with the sidecar metadata&quot;. If a use case emerges for <code>.md</code> without transcription, the helper is already factored out as <code>writeChunkMarkdownSibling</code> and can be invoked from <code>_attachFinalize</code> directly</li>
+<li><strong>No streaming / partial markdown.</strong> The <code>.md</code> lands atomically once whisper.cpp finishes for that chunk. A long monologue might have several seconds of latency between the WAV closing and the <code>.md</code> appearing. That&#39;s the right trade-off given the per-chunk-rotation cadence; partial / streaming markdown is out of scope until there&#39;s a real-time UI consumer</li>
+<li><strong>Sidecar read happens at write time.</strong> If somehow the sidecar is mutated between the sidecar write and the markdown write (it shouldn&#39;t be -- nothing else touches the JSON), the <code>.md</code> reflects the latest content. Documented for the reader&#39;s mental model; not a real concern</li>
+<li><strong>No transcript escaping.</strong> Whisper output goes into the <code>.md</code> verbatim. If the transcript happens to contain <code>## </code> at the start of a line, that becomes an H2. Acceptable today; if T-7 builds a parser that wants strict structural control, escape on the way in</li>
+<li><strong><code>#N</code> disambiguator</strong> uses the <code>-2</code>, <code>-3</code>, etc. suffix on rare same-millisecond chunk-name collisions. Verified by the parser test but not by a real-hardware collision (would need two stop-start cycles inside one millisecond)</li>
+</ul>
+</li>
+<li>Why: the transcript alone is a &quot;wall of text&quot; with no provenance. The sidecar JSON has the provenance but no human-readable surface. The <code>.md</code> is the join: it answers &quot;which chunk is this, when was it captured, how long is it, how loud was it, what was said&quot;. This is the artifact that the human reviewer (or, later, the human-review UI) opens directly. T-5 will refine the failure-mode messaging and T-6 will validate the whole <code>.wav</code>/<code>.json</code>/<code>.txt</code>/<code>.md</code> quartet in one demo run</li>
+</ul>
 
 </body>
 </html>
