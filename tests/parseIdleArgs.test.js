@@ -10,6 +10,8 @@ function expectIdleShape(overrides = {}) {
     durationSeconds: null,
     name: null,
     root: null,
+    transcribe: false,
+    transcribeModel: null,
     ...overrides,
   };
 }
@@ -73,6 +75,29 @@ describe('parseIdleArgs', () => {
 
   test('rejects extra positional arguments', () => {
     expect(parseIdleArgs(['./r', './r2']).error).toMatch(/extra argument/);
+  });
+
+  test('parses --transcribe as a boolean presence flag', () => {
+    expect(parseIdleArgs(['./r', '--transcribe']).transcribe).toBe(true);
+    expect(parseIdleArgs(['./r']).transcribe).toBe(false);
+  });
+
+  test('rejects --transcribe=value (presence flag does not take a value)', () => {
+    expect(parseIdleArgs(['./r', '--transcribe=yes']).error)
+      .toMatch(/--transcribe does not take a value/);
+  });
+
+  test('parses --model for the transcription path', () => {
+    expect(parseIdleArgs(['./r', '--transcribe', '--model', 'models/small.en.bin']).transcribeModel)
+      .toBe('models/small.en.bin');
+  });
+
+  test('--model is parsed even without --transcribe (no auto-coupling)', () => {
+    // The CLI dispatcher checks --transcribe to decide whether to use the
+    // model path. Parser-side, we just record what the user wrote.
+    const r = parseIdleArgs(['./r', '--model', 'models/medium.en.bin']);
+    expect(r.transcribe).toBe(false);
+    expect(r.transcribeModel).toBe('models/medium.en.bin');
   });
 });
 

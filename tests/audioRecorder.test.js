@@ -293,6 +293,144 @@ describe('defaultChunkFilename', () => {
   });
 });
 
+describe('AudioRecorder transcribe wiring', () => {
+  test('default: transcribe is false and transcribeQueue is null', () => {
+    const r = new AudioRecorder();
+    expect(r.transcribe).toBe(false);
+    expect(r.transcribeQueue).toBeNull();
+  });
+
+  test('transcribe: false (explicit) also leaves queue null', () => {
+    const r = new AudioRecorder({ transcribe: false });
+    expect(r.transcribe).toBe(false);
+    expect(r.transcribeQueue).toBeNull();
+  });
+
+  test('transcribe: true builds a queue with the default model path', () => {
+    const r = new AudioRecorder({ transcribe: true, transcribeFn: jest.fn() });
+    expect(r.transcribe).toBe(true);
+    expect(r.transcribeQueue).not.toBeNull();
+    expect(r.transcribeQueue.length).toBe(0);
+    expect(r.transcribeModel).toBe(require('../src/transcribe').DEFAULT_MODEL_PATH);
+  });
+
+  test('transcribe: true with explicit transcribeModel uses it', () => {
+    const r = new AudioRecorder({
+      transcribe: true,
+      transcribeFn: jest.fn(),
+      transcribeModel: 'models/medium.en.bin',
+    });
+    expect(r.transcribeModel).toBe('models/medium.en.bin');
+  });
+
+  test('drainTranscriptions() returns a resolved promise when transcription is off', async () => {
+    const r = new AudioRecorder();
+    const start = Date.now();
+    await r.drainTranscriptions();
+    // resolved promise should settle in well under one task tick
+    expect(Date.now() - start).toBeLessThan(20);
+  });
+
+  test('drainTranscriptions() waits for enqueued jobs to settle', async () => {
+    const os = require('os');
+    const path = require('path');
+    const realFs = jest.requireActual('fs');
+    const tmpdir = realFs.mkdtempSync(path.join(os.tmpdir(), 'lr-recorder-drain-'));
+    const wav = path.join(tmpdir, 'job.wav');
+
+    const transcribeFn = jest.fn(async ({ wav: w }) => ({
+      text: 'hi',
+      model: 'm.bin',
+      wav: w,
+      binary: 'whisper-cli',
+      durationMs: 0,
+      // Pretend whisper.cpp wrote the canonical filename so the normalisation
+      // step in defaultTranscribeRun does nothing (no real fs writes needed).
+      txtPath: path.join(tmpdir, 'job.txt'),
+      exitCode: 0,
+    }));
+    const r = new AudioRecorder({
+      transcribe: true,
+      transcribeFn,
+      transcribeLogger: { onSuccess: () => {}, onFailure: () => {} },
+    });
+    r.transcribeQueue.enqueue({ wav, model: 'm.bin' });
+    expect(r.transcribeQueue.length).toBe(1);
+    await r.drainTranscriptions();
+    expect(r.transcribeQueue.length).toBe(0);
+    expect(transcribeFn).toHaveBeenCalledTimes(1);
+    realFs.rmSync(tmpdir, { recursive: true, force: true });
+  });
+});
+
+describe('defaultTranscribeRun (filename normalisation)', () => {
+  const { defaultTranscribeRun } = require('../src/audioRecorder');
+  const os = require('os');
+  const path = require('path');
+  const realFs = jest.requireActual('fs');
+
+  let tmpdir;
+
+  beforeEach(() => {
+    tmpdir = realFs.mkdtempSync(path.join(os.tmpdir(), 'lr-default-tx-'));
+  });
+  afterEach(() => {
+    realFs.rmSync(tmpdir, { recursive: true, force: true });
+  });
+
+  test('rewrites a legacy <wav>.txt sibling to the canonical <basename>.txt', async () => {
+    const wav = path.join(tmpdir, 'chunk-A.wav');
+    const legacyTxt = `${wav}.txt`;
+    realFs.writeFileSync(wav, Buffer.from('RIFF\0\0\0\0WAVE', 'binary'));
+    realFs.writeFileSync(legacyTxt, 'hello world from whisper\n');
+    const transcribeFn = jest.fn(async () => ({
+      text: 'hello world from whisper',
+      model: 'm.bin',
+      wav,
+      binary: 'whisper-cli',
+      durationMs: 1,
+      txtPath: legacyTxt,
+      exitCode: 0,
+    }));
+
+    const result = await defaultTranscribeRun(
+      { wav, model: 'm.bin' },
+      { transcribeFn, fsImpl: realFs },
+    );
+
+    const canonical = path.join(tmpdir, 'chunk-A.txt');
+    expect(result.txtPath).toBe(canonical);
+    expect(realFs.existsSync(canonical)).toBe(true);
+    expect(realFs.readFileSync(canonical, 'utf8').trim()).toBe('hello world from whisper');
+    // Legacy file removed.
+    expect(realFs.existsSync(legacyTxt)).toBe(false);
+  });
+
+  test('leaves the canonical txt path alone when transcribeFile already wrote it there', async () => {
+    const wav = path.join(tmpdir, 'chunk-B.wav');
+    const canonical = path.join(tmpdir, 'chunk-B.txt');
+    realFs.writeFileSync(wav, Buffer.from('RIFF\0\0\0\0WAVE', 'binary'));
+    realFs.writeFileSync(canonical, 'already canonical text\n');
+    const transcribeFn = jest.fn(async () => ({
+      text: 'already canonical text',
+      model: 'm.bin',
+      wav,
+      binary: 'whisper-cli',
+      durationMs: 1,
+      txtPath: canonical,
+      exitCode: 0,
+    }));
+
+    const result = await defaultTranscribeRun(
+      { wav, model: 'm.bin' },
+      { transcribeFn, fsImpl: realFs },
+    );
+    expect(result.txtPath).toBe(canonical);
+    expect(realFs.existsSync(canonical)).toBe(true);
+    expect(realFs.readFileSync(canonical, 'utf8').trim()).toBe('already canonical text');
+  });
+});
+
 describe('WHISPER_AUDIO_FORMAT contract', () => {
   const { WHISPER_AUDIO_FORMAT } = require('../src/audioRecorder');
 

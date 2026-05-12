@@ -226,7 +226,7 @@ Same shape as Phase 3A/3B: prove the foundation before integrating.
 |---|---|---|---|
 | T-1 | Whisper.cpp dependency probe | `npm run transcribe:check` reports the resolved binary or a clean install message | ✅ |
 | T-2 | Transcribe a known-good WAV via CLI | `node src/index.js transcribe <file>` prints text from a single WAV | ✅ |
-| T-3 | Wire transcription into idle rotation | Each rotated chunk is auto-transcribed; transcript stored next to the WAV | ⏳ |
+| T-3 | Wire transcription into idle rotation | Each rotated chunk is auto-transcribed; transcript stored next to the WAV (sibling `<basename>.txt`); CLI shutdown drains the queue | ✅ |
 | T-4 | Per-chunk markdown persistence | `.md` per chunk combines transcript + sidecar metadata for human review | ⏳ |
 | T-5 | Resilience: retries, skip empty, error handling | Transcription survives bad chunks, slow runs, and silent rooms | ⏳ |
 | T-6 | End-to-end "speak → see markdown update" demo | Documented full run from `idle` start to live `.md` updates | ⏳ |
@@ -250,12 +250,12 @@ Six sprints; ~30–90 minutes each. After T-2 you can demo "transcribe a file". 
 - **Realized acceptance criteria:** on this Windows machine the recorded `whisper-cli` build actually writes the **legacy** filename (`hello.wav.txt`), not the modern `<basename>.txt` — the defensive two-candidate lookup quietly handled it on the first real run. A 5-second ambient-room WAV (peak 0.032 / -29.9 dBFS) transcribed to an empty string in 2.6 s (~57% of realtime on `base.en` with the Win32 BLAS build); whisper.cpp correctly emitted no transcript for non-speech audio rather than hallucinating one. Pipeline exits 0; CLI error paths (missing binary, missing model, missing/non-WAV input, non-zero whisper exit, empty .txt output, spawn ENOENT) are all covered by the 8-describe-block `tests/transcribe.test.js` plus 11-case `tests/parseTranscribeArgs.test.js`. **Not yet validated:** transcript fidelity against actual spoken words — that needs a user-in-the-loop record-then-transcribe run with someone speaking into the mic. Honest deferred item, tracked at the bottom of the Sprint 23 log entry.
 - **Known limitations:** transcribe is a blocking spawn; a 30-second WAV ties up the CPU for ~15 s. Acceptable for T-2's single-file use case; T-3 will introduce queue + serial processing for the idle integration. The `version` field in `--json` output is `null` on the Win32 build whose `--help` banner contains no semver token (same shape as the T-1 probe output); `versionLabel` carries the raw banner line so downstream consumers have something to log.
 
-### T-3 — Wire transcription into idle rotation (In progress; Sprint 24 ✅, Sprint 25 ⏳)
+### T-3 — Wire transcription into idle rotation (✅ Completed across Sprints 24 + 25)
 
-Split into two mini-sprints since the queue is a reusable primitive worth its own commit:
+Split into two mini-sprints since the queue was a reusable primitive worth its own commit:
 
 - **Sprint 24 (T-3.1):** serial in-memory transcription queue (`src/transcribeQueue.js`). 20 new tests; no integration. ✅
-- **Sprint 25 (T-3.2):** wire the queue through `AudioRecorder.transcribe` + `idle --transcribe` CLI flag + end-to-end smoke. ⏳
+- **Sprint 25 (T-3.2):** wired the queue through `AudioRecorder.transcribe` + `idle --transcribe` + `--model` CLI flags + async shutdown that awaits `drainTranscriptions()`. Up-front model existence check, filename normalisation to canonical `<basename>.txt`. 12 more tests; end-to-end smoke confirmed transcription of real speech during a 12 s ambient capture. ✅
 
 - **Goal:** every chunk produced by `idle` gets auto-transcribed after its WAV header is finalised. Transcript text is stored either in the existing sidecar JSON (extending the schema to v2) or as a sibling `.txt` (parallel to the WAV).
 - **Touches:** `src/audioRecorder.js` (extend `_attachFinalize` to call into a new transcription hook), `src/transcribe.js` (already present from T-2; add a queue if needed), `src/chunkSidecar.js` (potential schema bump), tests.

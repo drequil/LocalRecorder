@@ -128,7 +128,12 @@ node src/index.js record [&lt;out.wav&gt;] [--name &lt;label&gt;] [--root &lt;di
 
 node src/index.js idle [&lt;directory&gt;] [--name &lt;label&gt;] [--root &lt;dir&gt;] [--duration N]
                       [--threshold P] [--silence N] [--device &lt;id&gt;] [--max-chunk-seconds N]
+                      [--transcribe] [--model &lt;path&gt;]
 # Per-silence WAV chunks plus JSON sidecars into a structured session directory.
+# With --transcribe, each chunk is auto-transcribed via whisper.cpp the moment
+# its WAV is finalised; the transcript is written next to the .wav as
+# &lt;basename&gt;.txt. Transcriptions run serially through an in-memory queue so two
+# long chunks don&#39;t fight for CPU.
 
 node src/index.js transcribe &lt;file.wav&gt; [--model &lt;path&gt;] [--json]
 # Transcribe one WAV via whisper.cpp. Prints the transcript text (or a JSON
@@ -229,10 +234,16 @@ node src/index.js transcribe &lt;file.wav&gt; [--model &lt;path&gt;] [--json]
 <td>Force-rotate after N seconds even if the user is still talking. Off by default.</td>
 </tr>
 <tr>
+<td><code>--transcribe</code></td>
+<td>idle</td>
+<td>flag</td>
+<td>Auto-transcribe each chunk on rotation; writes <code>&lt;basename&gt;.txt</code> sibling to the WAV. Requires whisper.cpp + model. Off by default.</td>
+</tr>
+<tr>
 <td><code>--model &lt;path&gt;</code></td>
-<td>transcribe</td>
+<td>idle / transcribe</td>
 <td>path</td>
-<td>Path to a whisper.cpp ggml model. Default: <code>./models/ggml-base.en.bin</code>.</td>
+<td>Path to a whisper.cpp ggml model. Default: <code>./models/ggml-base.en.bin</code>. For <code>idle</code>, only used when <code>--transcribe</code> is also set; failing existence check before capture starts.</td>
 </tr>
 <tr>
 <td><code>--json</code></td>
@@ -254,7 +265,20 @@ node src/index.js transcribe &lt;file.wav&gt; [--model &lt;path&gt;] [--json]
 node src/index.js transcribe hello.wav
 # this is a test
 </code></pre>
-<p>Whisper.cpp writes a sibling <code>.txt</code> next to the input WAV (current builds use <code>&lt;wav&gt;.txt</code>; older builds used <code>&lt;basename&gt;.txt</code>). LocalRecorder tolerates either convention and prints the resulting text. With <code>--json</code> the same call emits a structured payload including the resolved binary, model path, and processing time. Per-chunk auto-transcription during <code>idle</code> mode is a later sprint (T-3); for now, run <code>transcribe</code> on individual files.</p>
+<p>Whisper.cpp writes a sibling <code>.txt</code> next to the input WAV (current builds use <code>&lt;wav&gt;.txt</code>; older builds used <code>&lt;basename&gt;.txt</code>). LocalRecorder tolerates either convention and prints the resulting text. With <code>--json</code> the same call emits a structured payload including the resolved binary, model path, and processing time.</p>
+<h3>Example — idle with auto-transcription</h3>
+<pre><code class="language-bash">node src/index.js idle --name meeting --duration 3600 --threshold 0.5 --silence 20 --transcribe
+</code></pre>
+<p>Same chunk-on-silence behaviour as the plain <code>idle</code> example above, but each
+chunk gets a <code>&lt;basename&gt;.txt</code> transcript written next to its <code>.wav</code> and
+<code>.json</code> the moment whisper.cpp finishes (typically within a few seconds of
+rotation on CPU). Transcriptions run serially through an in-memory queue, so
+two long chunks in a row will queue rather than fight for CPU. On <code>Ctrl+C</code>
+or when <code>--duration</code> expires, the recorder waits for any queued transcripts
+to finish before exiting -- you won&#39;t lose the tail of a meeting just
+because you stopped capture early. If <code>--model &lt;path&gt;</code> is omitted, the
+default <code>./models/ggml-base.en.bin</code> is used; missing-model paths fail fast
+before capture starts.</p>
 <h2>Development</h2>
 <p>Follow MDM (Markdown-Driven Development) workflow with incremental sprints. Each sprint ends with commit, validation, and documentation update.</p>
 

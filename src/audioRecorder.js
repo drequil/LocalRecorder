@@ -5,6 +5,8 @@ const path = require('path');
 const { finalizeWavHeader } = require('./wavHeaderFix');
 const { PeakAccumulator } = require('./peakAccumulator');
 const { buildSidecar, writeSidecar } = require('./chunkSidecar');
+const { transcribeFile, DEFAULT_MODEL_PATH } = require('./transcribe');
+const { createTranscribeQueue } = require('./transcribeQueue');
 
 const WAV_HEADER_BYTES = 44; // canonical 44-byte preamble for our format
 
@@ -28,9 +30,41 @@ function defaultChunkFilename(now = new Date(), suffix = '') {
   return `chunk-${ts}${suffix}.wav`;
 }
 
+// Default queue worker: invoke transcribeFile, normalise whisper.cpp's .txt
+// output to the canonical <basename>.txt path (so we don't have to care which
+// filename convention the installed whisper-cli picked), and return the result.
+// Extracted so the constructor can fall back to it when the caller doesn't
+// inject a custom transcribeFn.
+async function defaultTranscribeRun({ wav, model }, { transcribeFn = transcribeFile, fsImpl = fs } = {}) {
+  const result = await transcribeFn({ wav, model });
+  const ext = path.extname(wav);
+  const stem = path.basename(wav, ext);
+  const canonical = path.join(path.dirname(wav), `${stem}.txt`);
+  if (result && result.txtPath && result.txtPath !== canonical) {
+    try {
+      fsImpl.writeFileSync(canonical, `${(result.text || '').trim()}\n`);
+      try { fsImpl.unlinkSync(result.txtPath); } catch (_) { /* best-effort cleanup */ }
+    } catch (err) {
+      // If we can't write the canonical .txt, surface the original whisper output
+      // location to the caller via the returned result so logs are still useful.
+      return { ...result, normalizeError: err.message };
+    }
+  }
+  return { ...result, txtPath: canonical };
+}
+
 class AudioRecorder {
   constructor(options = {}) {
-    const { idleThreshold, idleSilenceSeconds, maxChunkSeconds, ...rest } = options;
+    const {
+      idleThreshold,
+      idleSilenceSeconds,
+      maxChunkSeconds,
+      transcribe = false,
+      transcribeModel = DEFAULT_MODEL_PATH,
+      transcribeFn,
+      transcribeLogger = null,
+      ...rest
+    } = options;
     this.options = {
       ...WHISPER_AUDIO_FORMAT,
       ...rest,
@@ -48,6 +82,41 @@ class AudioRecorder {
     this.fileStreamPath = null;
     this.idle = false;
     this.listening = false;
+
+    // Transcription wiring. Off by default so existing callers see byte-identical
+    // capture behaviour. Each enabled instance owns its own queue, so two
+    // concurrent recorders don't share a worker.
+    this.transcribe = transcribe === true;
+    this.transcribeModel = transcribeModel;
+    this.transcribeQueue = null;
+    if (this.transcribe) {
+      const runFn = (job) => defaultTranscribeRun(job, { transcribeFn });
+      const logger = transcribeLogger || {
+        onSuccess: (job, result) => {
+          if (result && result.txtPath) {
+            const rel = path.relative(process.cwd(), result.txtPath);
+            console.log(`[transcribed] ${rel}`);
+          }
+        },
+        onFailure: (job, error) => {
+          const rel = path.relative(process.cwd(), job.wav);
+          console.warn(`[transcribe failed] ${rel}: ${error.message}`);
+        },
+      };
+      this.transcribeQueue = createTranscribeQueue({
+        run: runFn,
+        onSuccess: logger.onSuccess,
+        onFailure: logger.onFailure,
+      });
+    }
+  }
+
+  // Wait for any in-flight or queued transcriptions to settle. Safe to call
+  // when transcription is off (returns a resolved promise). The CLI shutdown
+  // path awaits this before process.exit so we don't kill whisper-cli mid-job.
+  drainTranscriptions() {
+    if (!this.transcribeQueue) return Promise.resolve();
+    return this.transcribeQueue.drain();
   }
 
   // Attach a one-shot finalizer that rewrites the WAV header's RIFF + data
@@ -98,6 +167,14 @@ class AudioRecorder {
         } catch (err) {
           console.warn(`Sidecar write skipped for ${filePath}: ${err.message}`);
         }
+      }
+      // Hand the just-finalised WAV off to the transcription queue if
+      // transcription is enabled. The queue is serial -- two long chunks in a
+      // row will run back-to-back rather than fighting for CPU. We do this
+      // AFTER the sidecar write so consumers reading the .txt can rely on the
+      // .json sibling already being on disk.
+      if (this.transcribeQueue) {
+        this.transcribeQueue.enqueue({ wav: filePath, model: this.transcribeModel });
       }
     });
   }
@@ -291,3 +368,4 @@ class AudioRecorder {
 module.exports = AudioRecorder;
 module.exports.defaultChunkFilename = defaultChunkFilename;
 module.exports.WHISPER_AUDIO_FORMAT = WHISPER_AUDIO_FORMAT;
+module.exports.defaultTranscribeRun = defaultTranscribeRun;

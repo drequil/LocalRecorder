@@ -100,6 +100,8 @@ const IDLE_FLAGS = {
   '--duration': { type: 'positiveNumber', as: 'durationSeconds' },
   '--name': { type: 'string', as: 'name' },
   '--root': { type: 'string', as: 'root' },
+  '--transcribe': { type: 'flag', as: 'transcribe' },
+  '--model': { type: 'string', as: 'transcribeModel' },
 };
 
 const LISTEN_FLAGS = {
@@ -122,6 +124,7 @@ function printHelp() {
   console.log('  idle     [<directory>] [--name <label>] [--root <dir>] Per-silence WAV chunks + JSON sidecars');
   console.log('           [--threshold P] [--silence N] [--device <id>]');
   console.log('           [--duration N] [--max-chunk-seconds N]');
+  console.log('           [--transcribe] [--model <path>]');
   console.log('  transcribe <file.wav> [--model <path>] [--json]        Transcribe one WAV via whisper.cpp CLI');
   console.log('  help                                                   Show this help');
   console.log('');
@@ -139,6 +142,7 @@ function printHelp() {
   console.log('  --silence N             Silence duration before rotation in seconds (positive; default 1.0)');
   console.log('  --device <id>           Audio input device id (Windows waveaudio index; default 0)');
   console.log('  --max-chunk-seconds N   Force-rotate a chunk after N seconds even without silence');
+  console.log('  --transcribe            Auto-transcribe each idle chunk; writes <basename>.txt next to the .wav');
   console.log('  --model <path>          Whisper.cpp ggml model path (default ./models/ggml-base.en.bin)');
   console.log('  --json                  Emit transcribe result as JSON instead of plain text');
 }
@@ -171,6 +175,8 @@ function parseIdleArgs(args) {
     durationSeconds: flags.durationSeconds != null ? flags.durationSeconds : null,
     name: flags.name != null ? flags.name : null,
     root: flags.root != null ? flags.root : null,
+    transcribe: flags.transcribe === true,
+    transcribeModel: flags.transcribeModel != null ? flags.transcribeModel : null,
   };
 }
 
@@ -380,6 +386,18 @@ async function main(argv) {
       console.error(`Error: ${parsed.error}`);
       return 1;
     }
+    // Up-front model check: if the user asked for --transcribe but the model
+    // file doesn't exist, fail fast instead of capturing for an hour and then
+    // surfacing "transcribe failed" on every single chunk.
+    if (parsed.transcribe) {
+      const modelPath = parsed.transcribeModel || DEFAULT_MODEL_PATH;
+      if (!fs.existsSync(modelPath)) {
+        console.error(`Error: --transcribe is set but model file not found: ${modelPath}`);
+        console.error('  Pass --model <path>, or download a model:');
+        console.error('  https://huggingface.co/ggerganov/whisper.cpp/tree/main');
+        return 1;
+      }
+    }
     const resolved = resolveIdleDirectory({
       root: parsed.root || undefined,
       name: parsed.name,
@@ -393,6 +411,8 @@ async function main(argv) {
       idleThreshold: parsed.idleThreshold,
       idleSilenceSeconds: parsed.idleSilenceSeconds,
       maxChunkSeconds: parsed.maxChunkSeconds,
+      transcribe: parsed.transcribe,
+      transcribeModel: parsed.transcribeModel,
     });
   }
 
@@ -415,7 +435,10 @@ async function main(argv) {
   }
 
   let durationTimer = null;
-  const shutdown = (reason) => {
+  let shuttingDown = false;
+  const shutdown = async (reason) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     if (durationTimer) {
       clearTimeout(durationTimer);
       durationTimer = null;
@@ -427,17 +450,34 @@ async function main(argv) {
       // recorder was not active; safe to ignore
     }
     // Give the fileStream's 'close' event a tick to fire so the WAV header
-    // fixup and sidecar write can run before the process exits.
-    setTimeout(() => process.exit(0), 250);
+    // fixup, sidecar write, AND (if --transcribe is on) the final chunk's
+    // transcription enqueue all happen before we attempt to drain.
+    await new Promise((r) => setTimeout(r, 250));
+    // Wait for any queued / in-flight transcriptions to finish. No-op when
+    // transcription is off. The queue is serial so total drain time is
+    // sum(chunk_transcription_time) -- can be on the order of tens of seconds
+    // for a long meeting; that's the right behaviour because exiting early
+    // would orphan the .txt files we promised to produce.
+    try {
+      await recorder.drainTranscriptions();
+    } catch (_) { /* drain() does not reject */ }
+    process.exit(0);
   };
 
-  process.on('SIGINT', () => shutdown('Stopping...'));
-  process.on('SIGTERM', () => shutdown('Stopping...'));
+  const wireShutdown = (reason) => {
+    shutdown(reason).catch((err) => {
+      console.error('Shutdown error:', err);
+      process.exit(1);
+    });
+  };
+
+  process.on('SIGINT', () => wireShutdown('Stopping...'));
+  process.on('SIGTERM', () => wireShutdown('Stopping...'));
 
   if (durationSeconds !== null) {
     const label = command === 'idle' ? 'Listening' : 'Recording';
     console.log(`${label} for ${durationSeconds}s. Press Ctrl+C to stop early.`);
-    durationTimer = setTimeout(() => shutdown(`Reached ${durationSeconds}s, stopping.`), durationSeconds * 1000);
+    durationTimer = setTimeout(() => wireShutdown(`Reached ${durationSeconds}s, stopping.`), durationSeconds * 1000);
   }
 
   return 0;

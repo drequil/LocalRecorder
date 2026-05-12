@@ -493,3 +493,49 @@ Next: MS-1 — sox dependency probe. After that the track proceeds linearly thro
   - **No structured logger.** Success and failure callbacks are fire-and-forget; the queue doesn't itself emit any logs. T-3.2 will wire `console.log` for `[transcribed]` lines from the integration side so the queue stays generic
   - **`pending` is observable but not the deeper queue depth (running + queued split).** Internally there is no separate "running" vs "queued" bucket because we use a promise chain rather than an array. If T-5 needs that distinction for backpressure decisions, a small `running` flag can be tracked alongside `pending` cheaply
 - Why: the integration in Sprint 25 wants to enqueue a transcription per chunk-rotation event. Without a queue, two adjacent long chunks would race two `whisper-cli` processes against each other on the same CPU and the same model file mapping. Landing the queue as its own primitive before any of the integration plumbing means the integration sprint can focus on "where do we hook this in" rather than "does serialisation work" — and the queue gets its own unit-test surface that the integration tests can rely on rather than duplicate
+
+## Sprint 25 (T-3.2): Wire transcription into idle rotation (Completed)
+- Second half of T-3. The Sprint 24 queue primitive is now plumbed end-to-end: `idle --transcribe` writes a `<basename>.txt` next to every `.wav`+`.json` chunk as it rotates, and the CLI shutdown waits for any in-flight transcriptions to finish before exit. T-3 is ✅
+- `AudioRecorder` constructor gained four new options, all opt-in:
+  - `transcribe: boolean` (default `false`) — when `true`, builds a private `transcribeQueue` instance and primes the close-event hook in `_attachFinalize` to enqueue per chunk
+  - `transcribeModel: string` (default `DEFAULT_MODEL_PATH` from `src/transcribe.js`) — passed verbatim to each job
+  - `transcribeFn: function` (optional) — injection point for tests so they don't need a real `whisper-cli` on PATH
+  - `transcribeLogger: { onSuccess, onFailure }` (optional) — defaults to console.log/warn lines (`[transcribed] <relpath>` / `[transcribe failed] <relpath>: <message>`). Override to swallow logs in tests or to wire a structured logger later
+- `AudioRecorder._attachFinalize` got a single new tail: if `this.transcribeQueue` exists, after the WAV header fix and sidecar write succeed (or fail-but-warn), enqueue `{ wav: filePath, model: this.transcribeModel }`. Skipped for the zero-byte cleanup path (sox-exited-without-audio) — those WAVs are deleted before reaching the enqueue site
+- `AudioRecorder.drainTranscriptions()` — new public method that returns `this.transcribeQueue.drain()` (or `Promise.resolve()` when transcription is off). The CLI shutdown calls this after the existing 250 ms file-flush grace, so the final chunk's transcription gets to complete before `process.exit`. Drain time is `sum(chunk_transcription_time)` — typically a few seconds for short ambient chunks, can be tens of seconds for a long monologue tail. That's the right trade-off — exiting earlier would orphan `.txt` files we promised to write
+- `defaultTranscribeRun({ wav, model }, { transcribeFn, fsImpl })` — the per-job worker the queue runs. Calls `transcribeFile`, then normalises whisper.cpp's `.txt` output to the canonical `<basename>.txt` sibling. If the installed whisper-cli wrote `<wav>.txt` (legacy convention seen on the Win32 BLAS build in T-2), we write `<basename>.txt` with the in-memory `text` and unlink the legacy file. Exported separately from the `AudioRecorder` class so it can be unit-tested in isolation
+- CLI:
+  - `--transcribe` (presence flag) and `--model <path>` (string) added to `IDLE_FLAGS`. `--model` is recognised even without `--transcribe` (the parser is policy-neutral); the CLI dispatcher only consults `--model` when `--transcribe` is set
+  - `parseIdleArgs` extended to return `{ transcribe, transcribeModel }`
+  - `main()` for the `idle` command does an up-front model-existence check when `--transcribe` is set: missing model file produces a one-line error pointing at the Hugging Face download page and exits non-zero before starting capture. Avoids the pit where the user kicks off an hour-long meeting and discovers an hour later that every chunk failed to transcribe
+  - The `shutdown(reason)` closure is now async-aware. After the 250 ms flush grace it awaits `recorder.drainTranscriptions()` (no-op when off). SIGINT/SIGTERM/duration-timer handlers route through a `wireShutdown(reason)` helper that catches any unhandled rejection and exits with code 1. A `shuttingDown` guard prevents double-invocation if SIGINT arrives mid-shutdown
+- Tests added (12 new across two files; **193 → 205**, still 14 suites):
+  - `tests/parseIdleArgs.test.js` (+5):
+    - `--transcribe` parses as a boolean presence flag, absent → false
+    - `--transcribe=value` errors out (presence flag does not take a value — caught by `parseSubcommandArgs`'s flag-type handling added in T-2)
+    - `--model` after `--transcribe` is captured into `transcribeModel`
+    - `--model` parses even without `--transcribe` (no auto-coupling)
+    - Default shape includes `transcribe: false, transcribeModel: null`
+  - `tests/audioRecorder.test.js` (+7):
+    - Default `AudioRecorder`: `transcribe === false`, `transcribeQueue === null`
+    - Explicit `transcribe: false` leaves queue null
+    - `transcribe: true` builds a queue, length === 0, model defaults to `DEFAULT_MODEL_PATH`
+    - `transcribe: true` with explicit `transcribeModel` honors the override
+    - `drainTranscriptions()` returns a resolved promise when off (no-op contract)
+    - `drainTranscriptions()` waits for enqueued jobs to settle (uses an injected `transcribeFn` to short-circuit the real whisper call)
+    - `defaultTranscribeRun` rewrites legacy `<wav>.txt` to canonical `<basename>.txt`, deleting the legacy file
+    - `defaultTranscribeRun` leaves the canonical txt alone when whisper.cpp already wrote it there (idempotent)
+- Files modified: `src/audioRecorder.js`, `src/index.js`, `tests/parseIdleArgs.test.js`, `tests/audioRecorder.test.js`, `README.md`, `docs/sprint-plan.md`, `docs/sprint-log.md`, regenerated HTML mirrors
+- Validation:
+  - `node --check src/audioRecorder.js src/index.js` clean
+  - `npm test` — 205/205 passing across 14 suites (+12 new)
+  - **End-to-end smoke:** `node src/index.js idle <tmp> --threshold 0.01 --silence 2 --transcribe --duration 12`. Produced one chunk: `chunk-20260512-162301-489.wav` (368 640 bytes), `.json` sidecar (peak 0.563 = −4.98 dB), `.txt` with 77 bytes of actual transcribed speech (`"Oh my, hey, hey, hey... Wouldn't wanna be too late... Hello."`). The `[transcribed]` log fired during the async shutdown drain, AFTER `Recording stopped` and `Silence detected, rotating chunk`. Filename normalisation worked: `.txt` landed at canonical `chunk-...-489.txt`, not the legacy `chunk-...-489.wav.txt`
+  - **Failure-mode smoke:** `idle --transcribe --model ./does/not/exist.bin --duration 5`. Fails fast with `Error: --transcribe is set but model file not found: ./does/not/exist.bin`, exit code 1, no capture started, no orphaned files
+  - **Incidental bonus:** the speech-bearing smoke run also closed out T-2's pending fidelity validation. T-2's first smoke captured silence (expected empty transcript); this T-3.2 smoke captured an ambient speech segment and whisper.cpp transcribed it cleanly, confirming the pipeline works end-to-end on real speech, not just absence of speech
+- Known limitations / design notes:
+  - **Drain time on shutdown can be long.** A 30-minute meeting with one long monologue chunk could mean ~17 minutes of post-stop drain time (per T-2's ~57% of realtime measurement on base.en + Win32 BLAS). T-5 will add a configurable drain timeout + a `--no-wait` shutdown mode for users who prefer to discard the tail
+  - **Queue is per-`AudioRecorder` instance.** If a caller starts a fresh recorder while a previous one is still draining, the new instance has its own queue. Today there's only one recorder per CLI invocation, so this is moot. If T-5 introduces a long-running daemon, the queue may want to move up a level
+  - **`record` subcommand does not expose `--transcribe`.** The constructor option works there too (the `_attachFinalize` hook is shared), but T-3 scope is idle-only. If someone wants single-file auto-transcribe, run `record` then `transcribe`. A `record --transcribe` flag is a trivial addition when there's user demand
+  - **No retry on transcription failure.** A whisper.cpp crash (OOM, model mismatch, etc.) is logged via `onFailure` and the queue moves on to the next chunk. T-5 owns the single-retry policy from the sprint plan's resilience knobs
+  - **No skip-empty heuristic.** Even an ambient-only chunk gets transcribed; whisper.cpp returns an empty string and we still write a 0-byte `.txt`. T-5 will gate enqueue on the sidecar's `peak` field so we don't burn CPU on dead air. Today's behaviour is conservative — better an empty `.txt` than missing one
+- Why: chunks rotate as soon as silence is detected, but until this sprint there was no consumer for them on the transcription side. By landing the integration with the queue + the async shutdown + the upfront model check together, `idle --transcribe` is now a one-flag workflow: start it, walk away, come back to a directory of `.wav`+`.json`+`.txt` triples per silence interval. Everything Phase 4 needs from here on (T-4 indexing, T-5 hardening, T-6 docs) builds on this rather than on a half-wired stub
