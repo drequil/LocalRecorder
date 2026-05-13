@@ -4,12 +4,14 @@ const AudioRecorder = require('./audioRecorder');
 const { enumerateDevices } = require('./audioDevices');
 const { peak16LE, toDb, renderBar } = require('./audioLevels');
 const { resolveRecordPath, resolveIdleDirectory } = require('./recordingPaths');
+const { effectiveRecordingsRoot } = require('./userConfig');
 const {
   DEFAULT_MODEL_PATH,
   transcribeFile,
   resolveBinary,
 } = require('./transcribe');
 const { probeBinary, parseWhisperHelp } = require('../tools/check-transcribe-deps');
+const { trace, enableTraceFromCli } = require('./trace');
 
 // Minimal subcommand flag parser. flagSpec maps `--flag-name` to a descriptor
 // {type, as}. Supports `--flag value` and `--flag=value` shapes; rejects unknown
@@ -90,6 +92,12 @@ const RECORD_FLAGS = {
   '--device': { type: 'string', as: 'device' },
   '--name': { type: 'string', as: 'name' },
   '--root': { type: 'string', as: 'root' },
+  '--transcribe': { type: 'flag', as: 'transcribe' },
+  '--no-transcribe': { type: 'flag', as: 'noTranscribe' },
+  '--model': { type: 'string', as: 'transcribeModel' },
+  '--transcribe-min-peak': { type: 'percent', as: 'transcribeMinPeak' },
+  '--transcribe-queue-max': { type: 'positiveNumber', as: 'transcribeQueueMax' },
+  '--trace': { type: 'flag', as: 'trace' },
 };
 
 const IDLE_FLAGS = {
@@ -110,6 +118,7 @@ const IDLE_FLAGS = {
   '--transcribe-min-peak': { type: 'percent', as: 'transcribeMinPeak' },
   // T-5: queue backlog warning threshold. 0 disables.
   '--transcribe-queue-max': { type: 'positiveNumber', as: 'transcribeQueueMax' },
+  '--trace': { type: 'flag', as: 'trace' },
 };
 
 const LISTEN_FLAGS = {
@@ -128,22 +137,28 @@ function printHelp() {
   console.log('  devices                                                List audio input devices visible to sox');
   console.log('  listen   [--device <id>]                               Live peak-level meter (no file written)');
   console.log('  record   [<out.wav>] [--name <label>] [--root <dir>]   Record one WAV');
-  console.log('           [--duration N] [--device <id>]');
+  console.log('           [--duration N] [--device <id>] [--transcribe | --no-transcribe] [--model <path>]');
+  console.log('           [--transcribe-min-peak P] [--transcribe-queue-max N] [--trace]');
   console.log('  idle     [<directory>] [--name <label>] [--root <dir>] Per-silence WAV chunks + JSON sidecars');
   console.log('           [--threshold P] [--silence N] [--device <id>]');
   console.log('           [--duration N] [--max-chunk-seconds N]');
-  console.log('           [--transcribe] [--model <path>]');
+  console.log('           [--transcribe] [--model <path>] [--trace]');
   console.log('           [--transcribe-min-peak P] [--transcribe-queue-max N]');
   console.log('  transcribe <file.wav> [--model <path>] [--json]        Transcribe one WAV via whisper.cpp CLI');
   console.log('  help                                                   Show this help');
   console.log('');
   console.log('Output layout:');
-  console.log('  --name <label>          recordings/<label>/<label>-<ts>.wav (record)');
-  console.log('                          recordings/<label>/chunk-<ts>-<ms>.wav (idle)');
-  console.log('  no name                 recordings/<YYYY-MM-DD>/recording-<ts>.wav (record)');
-  console.log('                          recordings/<YYYY-MM-DD>/chunk-<ts>-<ms>.wav (idle)');
-  console.log('  explicit positional     written literally; --name / --root ignored');
-  console.log('  --root <dir>            override the recordings root (default ./recordings)');
+  console.log('  --name <label>          <root>/<YYYY-MM-DD>/<label>/<label>-<ts>.wav (record)');
+  console.log('                          <root>/<YYYY-MM-DD>/<label>/chunk-<ts>-<ms>.wav (idle)');
+  console.log('  no name                 <root>/<YYYY-MM-DD>/recording-<ts>.wav (record)');
+  console.log('                          <root>/<YYYY-MM-DD>/chunk-<ts>-<ms>.wav (idle)');
+  console.log('  explicit positional     written literally; --name / --root / config ignored');
+  console.log('  default <root>          ./recordings, or recordingsRoot in JSON config (see below)');
+  console.log('  --root <dir>            override config and default ./recordings');
+  console.log('');
+  console.log('Config (optional):');
+  console.log('  %USERPROFILE%\\.localrecorder\\config.json   JSON: { "recordingsRoot": "D:/recordings" }');
+  console.log('  LOCALRECORDER_CONFIG=<path>                 path to the same JSON shape');
   console.log('');
   console.log('Flag notes:');
   console.log('  --duration N            Stop after N seconds (record + idle, positive number)');
@@ -151,10 +166,13 @@ function printHelp() {
   console.log('  --silence N             Silence duration before rotation, seconds (default 1.0; 0 disables sox silence detector -> rotate only on --max-chunk-seconds)');
   console.log('  --device <id>           Audio input device id (Windows waveaudio index; default 0)');
   console.log('  --max-chunk-seconds N   Force-rotate a chunk after N seconds even without silence');
-  console.log('  --transcribe            Auto-transcribe each idle chunk; writes <basename>.txt + .md next to .wav');
+  console.log('  --transcribe            Force auto-transcribe (idle: each chunk; record: at end). On record, this is optional if the model file already exists — see below.');
+  console.log('  --no-transcribe         record only: never run whisper after capture (WAV + sidecar only)');
   console.log('  --model <path>          Whisper.cpp ggml model path (default ./models/ggml-base.en.bin)');
+  console.log('  record + default model: If ./models/ggml-base.en.bin exists, transcribe runs automatically after Ctrl+C or --duration without any flags. Use --no-transcribe to skip.');
   console.log('  --transcribe-min-peak P Skip chunks whose sidecar peak < P (default 0.005 / ~-46 dBFS); 0 disables');
   console.log('  --transcribe-queue-max N  Warn when transcription queue depth > N (default 5); 0 disables');
+  console.log('  --trace                 Verbose stderr traces (also LOCALRECORDER_TRACE=1)');
   console.log('  --json                  Emit transcribe result as JSON instead of plain text');
 }
 
@@ -162,6 +180,9 @@ function parseRecordArgs(args) {
   const parsed = parseSubcommandArgs(args, RECORD_FLAGS);
   if (parsed.error) return { error: parsed.error };
   const { flags, positional } = parsed;
+  if (flags.transcribe === true && flags.noTranscribe === true) {
+    return { error: 'cannot use --transcribe together with --no-transcribe' };
+  }
   if (positional.length > 1) return { error: `unexpected extra argument: ${positional[1]}` };
   return {
     output: positional[0] != null ? positional[0] : null,
@@ -169,6 +190,12 @@ function parseRecordArgs(args) {
     device: flags.device != null ? flags.device : null,
     name: flags.name != null ? flags.name : null,
     root: flags.root != null ? flags.root : null,
+    transcribe: flags.transcribe === true,
+    noTranscribe: flags.noTranscribe === true,
+    transcribeModel: flags.transcribeModel != null ? flags.transcribeModel : null,
+    transcribeMinPeak: flags.transcribeMinPeak != null ? flags.transcribeMinPeak : null,
+    transcribeQueueMax: flags.transcribeQueueMax != null ? flags.transcribeQueueMax : null,
+    trace: flags.trace === true,
   };
 }
 
@@ -190,6 +217,7 @@ function parseIdleArgs(args) {
     transcribeModel: flags.transcribeModel != null ? flags.transcribeModel : null,
     transcribeMinPeak: flags.transcribeMinPeak != null ? flags.transcribeMinPeak : null,
     transcribeQueueMax: flags.transcribeQueueMax != null ? flags.transcribeQueueMax : null,
+    trace: flags.trace === true,
   };
 }
 
@@ -222,6 +250,27 @@ function compactOptions(obj) {
     if (v !== null && v !== undefined) out[k] = v;
   }
   return out;
+}
+
+// record: if the default model (or --model) exists on disk, enable post-stop
+// transcription even when the user omits --transcribe — one command, Ctrl+C,
+// whisper runs automatically. --no-transcribe opts out. idle/ never uses this
+// (chunked capture would surprise-run whisper on every rotation).
+function applyRecordAutoTranscribe(parsed) {
+  if (parsed.noTranscribe) {
+    return { ...parsed, transcribe: false, recordImplicitTranscribe: false };
+  }
+  if (parsed.transcribe) {
+    return { ...parsed, recordImplicitTranscribe: false };
+  }
+  const modelRel = parsed.transcribeModel || DEFAULT_MODEL_PATH;
+  const modelAbs = path.isAbsolute(modelRel)
+    ? path.normalize(modelRel)
+    : path.resolve(process.cwd(), modelRel);
+  if (fs.existsSync(modelAbs)) {
+    return { ...parsed, transcribe: true, recordImplicitTranscribe: true };
+  }
+  return { ...parsed, transcribe: false, recordImplicitTranscribe: false };
 }
 
 function runListen(args = []) {
@@ -285,6 +334,7 @@ async function runTranscribe(args = []) {
     return 1;
   }
   const model = parsed.model || DEFAULT_MODEL_PATH;
+  trace('transcribe-cli', 'one-shot transcribe', { wav: parsed.wav, model });
 
   let result;
   try {
@@ -379,25 +429,59 @@ async function main(argv) {
   let recorderOptions = {};
 
   if (command === 'record') {
-    const parsed = parseRecordArgs(tail);
+    let parsed = parseRecordArgs(tail);
     if (parsed.error) {
       console.error(`Error: ${parsed.error}`);
       return 1;
     }
+    if (parsed.trace) {
+      enableTraceFromCli();
+    }
+    parsed = applyRecordAutoTranscribe(parsed);
+    const modelPathForCheck = path.isAbsolute(parsed.transcribeModel || DEFAULT_MODEL_PATH)
+      ? path.normalize(parsed.transcribeModel || DEFAULT_MODEL_PATH)
+      : path.resolve(process.cwd(), parsed.transcribeModel || DEFAULT_MODEL_PATH);
+    if (parsed.transcribe && !fs.existsSync(modelPathForCheck)) {
+      console.error(`Error: --transcribe is set but model file not found: ${modelPathForCheck}`);
+      console.error('  Pass --model <path>, or download a model:');
+      console.error('  https://huggingface.co/ggerganov/whisper.cpp/tree/main');
+      return 1;
+    }
+    if (parsed.recordImplicitTranscribe) {
+      console.log(
+        'Model file found — will transcribe automatically when recording stops (Ctrl+C or --duration). ' +
+        'Use --no-transcribe for WAV + sidecar only.',
+      );
+    }
+    const rootPick = effectiveRecordingsRoot(parsed.root);
+    trace('cli', 'recordings root resolution', {
+      source: rootPick.source,
+      root: rootPick.root != null ? rootPick.root : '(default ./recordings)',
+      configPath: rootPick.configPath,
+    });
     const resolved = resolveRecordPath({
-      root: parsed.root || undefined,
+      root: rootPick.root,
       name: parsed.name,
       explicitPath: parsed.output,
     });
     recordTarget = resolved.filePath;
     sessionDir = resolved.sessionDir;
     durationSeconds = parsed.durationSeconds;
-    recorderOptions = compactOptions({ device: parsed.device });
+    recorderOptions = compactOptions({
+      device: parsed.device,
+      transcribe: parsed.transcribe,
+      transcribeModel: parsed.transcribeModel,
+      transcribeMinPeak: parsed.transcribeMinPeak,
+      transcribeQueueMax: parsed.transcribeQueueMax,
+    });
   } else {
     const parsed = parseIdleArgs(tail);
     if (parsed.error) {
       console.error(`Error: ${parsed.error}`);
       return 1;
+    }
+    if (parsed.trace) {
+      enableTraceFromCli();
     }
     // Up-front model check: if the user asked for --transcribe but the model
     // file doesn't exist, fail fast instead of capturing for an hour and then
@@ -411,8 +495,14 @@ async function main(argv) {
         return 1;
       }
     }
+    const rootPick = effectiveRecordingsRoot(parsed.root);
+    trace('cli', 'recordings root resolution', {
+      source: rootPick.source,
+      root: rootPick.root != null ? rootPick.root : '(default ./recordings)',
+      configPath: rootPick.configPath,
+    });
     const resolved = resolveIdleDirectory({
-      root: parsed.root || undefined,
+      root: rootPick.root,
       name: parsed.name,
       explicitDir: parsed.directory,
     });
@@ -442,6 +532,13 @@ async function main(argv) {
   }
 
   const recorder = new AudioRecorder(recorderOptions);
+  trace('cli', 'AudioRecorder constructed', {
+    command,
+    transcribe: !!recorderOptions.transcribe,
+    transcribeModel: recorderOptions.transcribeModel,
+    sessionDir,
+    ...(command === 'record' ? { recordTarget } : { idleDirectory }),
+  });
   if (command === 'idle') {
     console.log(`Idle session directory: ${idleDirectory}`);
     recorder.idleListen(idleDirectory);
@@ -468,22 +565,27 @@ async function main(argv) {
       durationTimer = null;
     }
     if (reason) console.log(`\n${reason}`);
+    trace('shutdown', 'stop: calling recorder.stop()');
     try {
       recorder.stop();
     } catch (e) {
       // recorder was not active; safe to ignore
     }
+    trace('shutdown', 'stop: recorder.stop() returned (or no-op)');
     // Give the fileStream's 'close' event a tick to fire so the WAV header
     // fixup, sidecar write, AND (if --transcribe is on) the final chunk's
     // transcription enqueue all happen before we attempt to drain.
     await new Promise((r) => setTimeout(r, 250));
+    trace('shutdown', 'post-close grace (250ms) elapsed');
     // Wait for any queued / in-flight transcriptions to finish. No-op when
     // transcription is off. The queue is serial so total drain time is
     // sum(chunk_transcription_time) -- can be on the order of tens of seconds
     // for a long meeting; that's the right behaviour because exiting early
     // would orphan the .txt files we promised to produce.
     try {
+      trace('shutdown', 'await drainTranscriptions()');
       await recorder.drainTranscriptions();
+      trace('shutdown', 'drainTranscriptions() settled');
     } catch (_) { /* drain() does not reject */ }
     process.exit(0);
   };
@@ -529,4 +631,7 @@ module.exports = {
   parseListenArgs,
   parseTranscribeArgs,
   parseSubcommandArgs,
+  applyRecordAutoTranscribe,
+  trace,
+  enableTraceFromCli,
 };

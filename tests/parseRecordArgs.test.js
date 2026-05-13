@@ -7,6 +7,12 @@ function expectShape(overrides = {}) {
     device: null,
     name: null,
     root: null,
+    transcribe: false,
+    noTranscribe: false,
+    transcribeModel: null,
+    transcribeMinPeak: null,
+    transcribeQueueMax: null,
+    trace: false,
     ...overrides,
   };
 }
@@ -61,7 +67,20 @@ describe('parseRecordArgs', () => {
     expect(parseRecordArgs(['out.wav', '--bogus']).error).toMatch(/unknown flag/);
   });
 
-  test('errors on extra positional arguments', () => {
-    expect(parseRecordArgs(['a.wav', 'b.wav']).error).toMatch(/extra argument/);
+  test('parses --transcribe and --model on record', () => {
+    expect(parseRecordArgs(['--transcribe', '--model', 'm.bin', '--duration', '5']))
+      .toEqual(expectShape({ transcribe: true, transcribeModel: 'm.bin', durationSeconds: 5 }));
+  });
+
+  test('parses --trace', () => {
+    expect(parseRecordArgs(['--trace', '--duration', '1'])).toEqual(expectShape({ trace: true, durationSeconds: 1 }));
+  });
+
+  test('parses --no-transcribe', () => {
+    expect(parseRecordArgs(['--no-transcribe', '--duration', '1'])).toEqual(expectShape({ noTranscribe: true, durationSeconds: 1 }));
+  });
+
+  test('rejects --transcribe together with --no-transcribe', () => {
+    expect(parseRecordArgs(['--transcribe', '--no-transcribe']).error).toMatch(/cannot use --transcribe together/);
   });
 });

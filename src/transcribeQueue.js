@@ -28,6 +28,8 @@
 //   - Retry-on-failure
 //   - Skip-empty heuristics
 
+const { trace } = require('./trace');
+
 function noop() {}
 
 function createTranscribeQueue({
@@ -87,17 +89,24 @@ function createTranscribeQueue({
   function enqueue(job) {
     pending += 1;
     maybeWarnOverflow();
+    trace('queue', 'enqueue', {
+      wav: job && job.wav,
+      pendingAfterEnqueue: pending,
+    });
 
     const next = head.then(async () => {
+      trace('queue', 'job start', { wav: job && job.wav, pendingBeforeRun: pending });
       let result;
       try {
         result = await run(job);
       } catch (error) {
+        trace('queue', 'job failed', { wav: job && job.wav, message: error && error.message });
         safe(onFailure, job, error);
         pending -= 1;
         maybeWarnOverflow();
         return { ok: false, error };
       }
+      trace('queue', 'job ok', { wav: job && job.wav });
       safe(onSuccess, job, result);
       pending -= 1;
       maybeWarnOverflow();

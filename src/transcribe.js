@@ -22,6 +22,7 @@ const {
   pickCandidateBinary,
   probeBinary,
 } = require('../tools/check-transcribe-deps');
+const { trace } = require('./trace');
 
 // T-2 spec says: "sensible default model (`./models/ggml-base.en.bin` if present, else
 // error)". This matches whisper-cli's own documented default (`-m FNAME` defaults to
@@ -132,6 +133,7 @@ async function transcribeFile({
 
   const resolvedBinary = binary || resolveBinaryFn();
   if (!resolvedBinary) {
+    trace('whisper', 'resolveBinary: no CLI on PATH');
     throw new Error(
       'transcribe: no whisper.cpp CLI found on PATH.\n' +
       '  Run `npm run transcribe:check` for install instructions.'
@@ -139,6 +141,7 @@ async function transcribeFile({
   }
 
   const args = buildWhisperArgs({ model, wav });
+  trace('whisper', 'spawn', { binary: resolvedBinary, args, wav, model });
   const startedAt = Date.now();
 
   let stdout = '';
@@ -154,6 +157,7 @@ async function transcribeFile({
   const durationMs = Date.now() - startedAt;
 
   if (exitCode !== 0) {
+    trace('whisper', 'non-zero exit', { exitCode, stderrHead: (stderr || '').slice(0, 500) });
     const err = new Error(`transcribe: whisper-cli exited with code ${exitCode}`);
     err.exitCode = exitCode;
     err.stderr = stderr;
@@ -163,6 +167,7 @@ async function transcribeFile({
 
   const transcript = readTranscriptFile(wav);
   if (transcript === null) {
+    trace('whisper', 'exit 0 but no .txt found', { tried: expectedTxtPaths(wav), stderrHead: (stderr || '').slice(0, 400) });
     const tried = expectedTxtPaths(wav).join(' | ');
     const stderrHead = (stderr || '').split(/\r?\n/).filter(Boolean).slice(0, 3).join(' / ');
     throw new Error(
@@ -171,6 +176,12 @@ async function transcribeFile({
       (stderrHead ? `  stderr: ${stderrHead}` : '')
     );
   }
+
+  trace('whisper', 'success', {
+    durationMs,
+    txtPath: transcript.txtPath,
+    textChars: (transcript.text || '').length,
+  });
 
   return {
     text: transcript.text,

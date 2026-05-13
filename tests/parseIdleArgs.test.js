@@ -14,6 +14,7 @@ function expectIdleShape(overrides = {}) {
     transcribeModel: null,
     transcribeMinPeak: null,
     transcribeQueueMax: null,
+    trace: false,
     ...overrides,
   };
 }
@@ -122,6 +123,10 @@ describe('parseIdleArgs', () => {
     expect(parseIdleArgs(['./r', '--transcribe-queue-max', '10']).transcribeQueueMax).toBe(10);
     expect(parseIdleArgs(['./r', '--transcribe-queue-max', '0']).error).toMatch(/positive number/);
     expect(parseIdleArgs(['./r', '--transcribe-queue-max', '-3']).error).toMatch(/positive number/);
+  });
+
+  test('parses --trace', () => {
+    expect(parseIdleArgs(['./r', '--trace']).trace).toBe(true);
   });
 });
 

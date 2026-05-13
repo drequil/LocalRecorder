@@ -9,6 +9,7 @@ const { transcribeFile, DEFAULT_MODEL_PATH } = require('./transcribe');
 const { createTranscribeQueue } = require('./transcribeQueue');
 const { formatChunkMarkdown, markdownPathFor } = require('./chunkMarkdown');
 const { appendChunkToSessionHtml } = require('./sessionTranscript');
+const { trace } = require('./trace');
 
 const WAV_HEADER_BYTES = 44; // canonical 44-byte preamble for our format
 
@@ -139,6 +140,7 @@ async function transcribeWithRetry(job, { transcribeFn, fsImpl, maxRetries = 1, 
 // the user. The .md write itself is best-effort; if it throws we log but do
 // NOT mask the underlying transcription outcome.
 async function runWithMarkdown(job, { transcribeFn, fsImpl = fs, maxRetries = 1, logger = console } = {}) {
+  trace('job', 'runWithMarkdown start', { wav: job.wav, model: job.model });
   let transcribeResult = null;
   let transcribeError = null;
   try {
@@ -180,8 +182,15 @@ async function runWithMarkdown(job, { transcribeFn, fsImpl = fs, maxRetries = 1,
     // surface that the user has stubs to look at.
     transcribeError.mdPath = mdPath;
     transcribeError.htmlPath = htmlPath;
+    trace('job', 'runWithMarkdown failed', { wav: job.wav, message: transcribeError.message });
     throw transcribeError;
   }
+  trace('job', 'runWithMarkdown ok', {
+    wav: job.wav,
+    textChars: transcribeResult && transcribeResult.text ? transcribeResult.text.length : 0,
+    mdPath,
+    htmlPath,
+  });
   return { ...transcribeResult, mdPath, htmlPath };
 }
 
@@ -279,7 +288,7 @@ class AudioRecorder {
         },
         onFailure: (job, error) => {
           const rel = path.relative(process.cwd(), job.wav);
-          const stubNote = error && error.mdPath ? ' (md stub written)' : '';
+          const stubNote = (error && (error.mdPath || error.htmlPath)) ? ' (stub written)' : '';
           console.warn(`[transcribe failed] ${rel}: ${error.message}${stubNote}`);
         },
         onOverflow: (length) => {
@@ -298,14 +307,30 @@ class AudioRecorder {
         onOverflow: logger.onOverflow,
       });
     }
+    if (this.transcribe) {
+      trace('recorder', 'Transcription queue enabled', {
+        model: this.transcribeModel,
+        transcribeMinPeak: this.transcribeMinPeak,
+        transcribeQueueMaxWarn: this.transcribeQueueMax,
+        transcribeRetries: this.transcribeRetries,
+      });
+    } else {
+      trace('recorder', 'Transcription disabled (pass --transcribe on record or idle to enable)');
+    }
   }
 
   // Wait for any in-flight or queued transcriptions to settle. Safe to call
   // when transcription is off (returns a resolved promise). The CLI shutdown
   // path awaits this before process.exit so we don't kill whisper-cli mid-job.
   drainTranscriptions() {
-    if (!this.transcribeQueue) return Promise.resolve();
-    return this.transcribeQueue.drain();
+    if (!this.transcribeQueue) {
+      trace('transcribe', 'drainTranscriptions: no queue (transcription not enabled on this recorder)');
+      return Promise.resolve();
+    }
+    trace('transcribe', 'drainTranscriptions: waiting', { pending: this.transcribeQueue.length });
+    return this.transcribeQueue.drain().then(() => {
+      trace('transcribe', 'drainTranscriptions: queue empty');
+    });
   }
 
   // Attach a one-shot finalizer that rewrites the WAV header's RIFF + data
@@ -322,13 +347,16 @@ class AudioRecorder {
     if (typeof filePath !== 'string') return;
     fileStream.once('close', () => {
       const closedAt = new Date();
+      trace('finalize', 'WriteStream closed', { file: path.relative(process.cwd(), filePath), hasSidecar: !!(sidecar && sidecar.peakAcc && sidecar.format) });
       let size = -1;
       try {
         size = fs.statSync(filePath).size;
-      } catch (_) {
+      } catch (err) {
+        trace('finalize', 'stat failed after close; skipping transcription path', { filePath, err: err.message });
         return;
       }
       if (size === 0) {
+        trace('finalize', 'zero-byte WAV removed; no transcription', { filePath });
         try { fs.unlinkSync(filePath); } catch (_) { /* leave it */ }
         return;
       }
@@ -375,6 +403,13 @@ class AudioRecorder {
           && peak != null
           && Number.isFinite(peak)
           && peak < this.transcribeMinPeak;
+        trace('finalize', 'transcription decision', {
+          file: path.basename(filePath),
+          bytes: size,
+          peak,
+          transcribeMinPeak: this.transcribeMinPeak,
+          shouldSkipPeakGate: shouldSkip,
+        });
         if (shouldSkip) {
           const reason = `peak ${peak.toFixed(4)} below --transcribe-min-peak ${this.transcribeMinPeak}`;
           try {
@@ -402,8 +437,16 @@ class AudioRecorder {
             `[transcribe skipped] ${path.relative(process.cwd(), filePath)} (${reason})`,
           );
         } else {
+          trace('finalize', 'enqueue transcription job', {
+            wav: path.relative(process.cwd(), filePath),
+            model: this.transcribeModel,
+          });
           this.transcribeQueue.enqueue({ wav: filePath, model: this.transcribeModel });
         }
+      } else {
+        trace('finalize', 'no transcription queue (transcribe off or not constructed)', {
+          file: path.basename(filePath),
+        });
       }
     });
   }

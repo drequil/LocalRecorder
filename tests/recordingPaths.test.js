@@ -68,10 +68,10 @@ describe('resolveRecordPath', () => {
     expect(r.explicit).toBe(true);
   });
 
-  test('with name: <root>/<name>/<name>-<ts>.wav', () => {
+  test('with name: <root>/<date>/<name>/<name>-<ts>.wav', () => {
     const r = resolveRecordPath({ root: '/tmp/rec', name: 'meeting', now });
-    expect(r.sessionDir).toBe(path.resolve('/tmp/rec/meeting'));
-    expect(r.filePath).toBe(path.resolve('/tmp/rec/meeting/meeting-20260512-090507.wav'));
+    expect(r.sessionDir).toBe(path.resolve('/tmp/rec/2026-05-12/meeting'));
+    expect(r.filePath).toBe(path.resolve('/tmp/rec/2026-05-12/meeting/meeting-20260512-090507.wav'));
     expect(r.label).toBe('meeting');
     expect(r.explicit).toBe(false);
   });
@@ -84,7 +84,7 @@ describe('resolveRecordPath', () => {
 
   test('falls back to DEFAULT_ROOT when no root is provided', () => {
     const r = resolveRecordPath({ name: 'meeting', now });
-    expect(r.sessionDir).toBe(path.resolve(DEFAULT_ROOT, 'meeting'));
+    expect(r.sessionDir).toBe(path.resolve(DEFAULT_ROOT, '2026-05-12', 'meeting'));
   });
 
   test('sanitizes the name before using it', () => {
@@ -109,9 +109,9 @@ describe('resolveIdleDirectory', () => {
     expect(r.explicit).toBe(true);
   });
 
-  test('with name: <root>/<name>', () => {
+  test('with name: <root>/<date>/<name>', () => {
     const r = resolveIdleDirectory({ root: '/tmp/rec', name: 'standup', now });
-    expect(r.sessionDir).toBe(path.resolve('/tmp/rec/standup'));
+    expect(r.sessionDir).toBe(path.resolve('/tmp/rec/2026-05-12/standup'));
     expect(r.label).toBe('standup');
   });
 
@@ -122,6 +122,6 @@ describe('resolveIdleDirectory', () => {
 
   test('falls back to DEFAULT_ROOT when no root is provided', () => {
     const r = resolveIdleDirectory({ name: 'standup', now });
-    expect(r.sessionDir).toBe(path.resolve(DEFAULT_ROOT, 'standup'));
+    expect(r.sessionDir).toBe(path.resolve(DEFAULT_ROOT, '2026-05-12', 'standup'));
   });
 });

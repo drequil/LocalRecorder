@@ -3,14 +3,15 @@
 // The canonical layout under DEFAULT_ROOT (./recordings) is:
 //
 //   recordings/
-//     <name-or-date>/             single-level subfolder per "session"
-//       recording-<ts>.wav        single-file record mode
-//       chunk-<ts>-<ms>.wav       idle-mode silence-delimited chunks
-//       chunk-<ts>-<ms>.json      MS-8 sidecar
+//     <YYYY-MM-DD>/                    unnamed session (record + idle)
+//       recording-<ts>.wav             single-file record mode
+//       chunk-<ts>-<ms>.wav            idle-mode chunks
+//       chunk-<ts>-<ms>.json           MS-8 sidecar
+//     <YYYY-MM-DD>/<name>/             named session (--name, slugified)
+//       <name>-<ts>.wav                record mode
+//       chunk-<ts>-<ms>.wav            idle chunks under the same name/date
 //
-// "Session" is either a user-supplied --name (slugified) or today's date in
-// YYYY-MM-DD form. Same-named sessions accumulate in the same folder; the
-// timestamped filenames keep them collision-free.
+// Same (date, name) pair reuses one folder; timestamped basenames stay unique.
 //
 // Legacy paths still work: callers can pass an explicit path (record) or an
 // explicit directory (idle), and we use it verbatim with no further layout
@@ -64,7 +65,7 @@ function resolveRecordPath({
   const ts = isoSortableTimestamp(now);
   const clean = sanitizeName(name);
   if (clean) {
-    const sessionDir = path.resolve(root, clean);
+    const sessionDir = path.resolve(root, isoDate(now), clean);
     return {
       filePath: path.join(sessionDir, `${clean}-${ts}.wav`),
       sessionDir,
@@ -92,7 +93,7 @@ function resolveIdleDirectory({
   const clean = sanitizeName(name);
   if (clean) {
     return {
-      sessionDir: path.resolve(root, clean),
+      sessionDir: path.resolve(root, isoDate(now), clean),
       explicit: false,
       label: clean,
     };
