@@ -69,15 +69,19 @@ function isWavFile(filePath) {
 
 // Pure: shape the argv we will hand to spawn. Kept separate so tests can pin the exact
 // flag order without exercising spawn.
-function buildWhisperArgs({ model, wav }) {
+function buildWhisperArgs({ model, wav, language = null }) {
   if (!model) throw new TypeError('buildWhisperArgs: model is required');
   if (!wav) throw new TypeError('buildWhisperArgs: wav is required');
   // --no-prints: suppress whisper-cli's progress chatter so stdout is clean.
   // --output-txt: emit the .txt sibling we will read after exit.
-  // -l en is the default for the .en models; we omit it so a non-English model can
-  //   work without a code change (the user passes a different --model and the language
-  //   auto-detects).
-  return ['--no-prints', '--output-txt', '-m', model, '-f', wav];
+  // -l: whisper.cpp source language (ISO 639-1, e.g. hi, zh, en). Omitted when unset so
+  //     whisper auto-detects (good for mixed audio). For CJK, callers often pass -l zh.
+  const args = ['--no-prints', '--output-txt', '-m', model];
+  if (language != null && String(language).trim() !== '') {
+    args.push('-l', String(language).trim());
+  }
+  args.push('-f', wav);
+  return args;
 }
 
 // Discover the whisper.cpp CLI binary on PATH. Pure-ish — accepts a probe injector so
@@ -109,6 +113,7 @@ function readTranscriptFile(wav) {
 async function transcribeFile({
   wav,
   model = DEFAULT_MODEL_PATH,
+  language = null,
   binary = null,
   spawnFn = spawn,
   resolveBinaryFn = resolveBinary,
@@ -140,8 +145,8 @@ async function transcribeFile({
     );
   }
 
-  const args = buildWhisperArgs({ model, wav });
-  trace('whisper', 'spawn', { binary: resolvedBinary, args, wav, model });
+  const args = buildWhisperArgs({ model, wav, language });
+  trace('whisper', 'spawn', { binary: resolvedBinary, args, wav, model, language: language || null });
   const startedAt = Date.now();
 
   let stdout = '';
@@ -187,6 +192,7 @@ async function transcribeFile({
     text: transcript.text,
     model,
     wav,
+    language: language != null && String(language).trim() !== '' ? String(language).trim() : null,
     binary: resolvedBinary,
     durationMs,
     txtPath: transcript.txtPath,

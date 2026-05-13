@@ -8,6 +8,7 @@
     "start": "node src/index.js",
     "docs:html": "node tools/build-html.js",
     "audio:check": "node tools/check-audio-deps.js",
+    "model:download-base": "node tools/download-ggml-base-bin.js",
     "transcribe:check": "node tools/check-transcribe-deps.js"
   },
   "keywords": [

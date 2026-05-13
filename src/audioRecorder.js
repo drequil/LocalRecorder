@@ -38,8 +38,8 @@ function defaultChunkFilename(now = new Date(), suffix = '') {
 // filename convention the installed whisper-cli picked), and return the result.
 // Extracted so the constructor can fall back to it when the caller doesn't
 // inject a custom transcribeFn.
-async function defaultTranscribeRun({ wav, model }, { transcribeFn = transcribeFile, fsImpl = fs } = {}) {
-  const result = await transcribeFn({ wav, model });
+async function defaultTranscribeRun({ wav, model, language }, { transcribeFn = transcribeFile, fsImpl = fs } = {}) {
+  const result = await transcribeFn({ wav, model, language });
   const ext = path.extname(wav);
   const stem = path.basename(wav, ext);
   const canonical = path.join(path.dirname(wav), `${stem}.txt`);
@@ -140,7 +140,7 @@ async function transcribeWithRetry(job, { transcribeFn, fsImpl, maxRetries = 1, 
 // the user. The .md write itself is best-effort; if it throws we log but do
 // NOT mask the underlying transcription outcome.
 async function runWithMarkdown(job, { transcribeFn, fsImpl = fs, maxRetries = 1, logger = console } = {}) {
-  trace('job', 'runWithMarkdown start', { wav: job.wav, model: job.model });
+  trace('job', 'runWithMarkdown start', { wav: job.wav, model: job.model, language: job.language || null });
   let transcribeResult = null;
   let transcribeError = null;
   try {
@@ -214,6 +214,7 @@ class AudioRecorder {
       maxChunkSeconds,
       transcribe = false,
       transcribeModel = DEFAULT_MODEL_PATH,
+      transcribeLanguage = null,
       transcribeFn,
       transcribeLogger = null,
       transcribeMinPeak = 0.005,
@@ -225,10 +226,12 @@ class AudioRecorder {
       ...WHISPER_AUDIO_FORMAT,
       ...rest,
     };
-    this.idleThreshold = Number.isFinite(idleThreshold) ? idleThreshold : 0.5;
+    // Idle defaults: sox treats signal *below* this % of peak as silence. A high
+    // default (e.g. 0.5%) caused mid-speech chunking when softer syllables dipped.
+    this.idleThreshold = Number.isFinite(idleThreshold) ? idleThreshold : 0.1;
     this.idleSilenceSeconds = Number.isFinite(idleSilenceSeconds)
       ? String(idleSilenceSeconds)
-      : '1.0';
+      : '2';
     // `--silence 0` is the explicit "disable sox silence detector" signal --
     // chunks rotate only on --max-chunk-seconds. Useful when the detector is
     // unreliable in the user's audio environment (e.g. fluctuating noise floor
@@ -249,6 +252,10 @@ class AudioRecorder {
     // concurrent recorders don't share a worker.
     this.transcribe = transcribe === true;
     this.transcribeModel = transcribeModel;
+    this.transcribeLanguage =
+      transcribeLanguage != null && String(transcribeLanguage).trim() !== ''
+        ? String(transcribeLanguage).trim()
+        : null;
     // T-5: peak gating threshold. Chunks whose sidecar peak < this are
     // marked 'skipped' with a stub .md and never enter the transcription
     // queue. Default 0.005 (~-46 dBFS) is well above typical room hum but
@@ -310,6 +317,7 @@ class AudioRecorder {
     if (this.transcribe) {
       trace('recorder', 'Transcription queue enabled', {
         model: this.transcribeModel,
+        language: this.transcribeLanguage,
         transcribeMinPeak: this.transcribeMinPeak,
         transcribeQueueMaxWarn: this.transcribeQueueMax,
         transcribeRetries: this.transcribeRetries,
@@ -356,6 +364,7 @@ class AudioRecorder {
         return;
       }
       if (size === 0) {
+        console.warn(`Skipping empty chunk (sox crash?): ${path.basename(filePath)}`);
         trace('finalize', 'zero-byte WAV removed; no transcription', { filePath });
         try { fs.unlinkSync(filePath); } catch (_) { /* leave it */ }
         return;
@@ -440,8 +449,13 @@ class AudioRecorder {
           trace('finalize', 'enqueue transcription job', {
             wav: path.relative(process.cwd(), filePath),
             model: this.transcribeModel,
+            language: this.transcribeLanguage,
           });
-          this.transcribeQueue.enqueue({ wav: filePath, model: this.transcribeModel });
+          this.transcribeQueue.enqueue({
+            wav: filePath,
+            model: this.transcribeModel,
+            language: this.transcribeLanguage,
+          });
         }
       } else {
         trace('finalize', 'no transcription queue (transcribe off or not constructed)', {
@@ -584,13 +598,18 @@ class AudioRecorder {
         // kill -- stay quiet and let the shutdown path do its thing.
         clearMaxChunkTimer();
         if (!this.recording) return;
-        console.error('Idle-listen stream error:', err);
-        this.idle = false;
+        // sox occasionally crashes with exit code null on Windows (waveaudio
+        // handle exhaustion after several long chunks). Treat it as a finished
+        // chunk and restart automatically rather than aborting the session.
+        console.warn(`Idle-listen stream error (restarting): ${err.message || err}`);
         this.recording = null;
         if (this.fileStream) {
           try { this.fileStream.end(); } catch (_) { /* already closed */ }
           this.fileStream = null;
           this.fileStreamPath = null;
+        }
+        if (this.idle) {
+          setTimeout(recordChunk, 500);
         }
       });
 
@@ -599,7 +618,7 @@ class AudioRecorder {
         // killed it. Either way, close the current chunk; only schedule the
         // next one if we're still in idle mode (i.e. stop() didn't run).
         clearMaxChunkTimer();
-        console.log(`Silence detected, rotating chunk: ${path.basename(chunkPath)}`);
+        console.log(`Finished chunk: ${path.basename(chunkPath)}`);
         this.recording = null;
         if (this.fileStream) {
           this.fileStream.end();

@@ -120,8 +120,8 @@ describe('AudioRecorder', () => {
     expect(lastCall).toMatchObject({
       audioType: 'wav',
       endOnSilence: true,
-      threshold: 0.5,
-      silence: '1.0',
+      threshold: 0.1,
+      silence: '2',
     });
   });
 
@@ -199,6 +199,56 @@ describe('AudioRecorder', () => {
       const secondPath = fs.createWriteStream.mock.calls[1][0];
       expect(secondPath).not.toBe(firstPath);
       expect(secondPath).toMatch(/[\\\/]chunk-\d{8}-\d{6}-\d{3}(?:-\d+)?\.wav$/);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('idleListen() auto-restarts on a sox stream error (exit code null crash)', () => {
+    jest.useFakeTimers();
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      recorder.idleListen('./recordings');
+      const firstPath = fs.createWriteStream.mock.calls[0][0];
+
+      const firstStream = recorderLib.__lastRecording.__stream;
+      const errorHandler = firstStream.on.mock.calls.find(([event]) => event === 'error');
+      expect(errorHandler).toBeDefined();
+      errorHandler[1](new Error('sox has exited with error code null'));
+
+      jest.advanceTimersByTime(600);
+
+      // A second chunk should have been started.
+      expect(fs.createWriteStream).toHaveBeenCalledTimes(2);
+      const secondPath = fs.createWriteStream.mock.calls[1][0];
+      expect(secondPath).not.toBe(firstPath);
+      // Idle flag must still be true (session not aborted).
+      expect(recorder.idle).toBe(true);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('restarting'));
+    } finally {
+      jest.useRealTimers();
+      warnSpy.mockRestore();
+    }
+  });
+
+  test('idleListen() does NOT restart on error after stop()', () => {
+    jest.useFakeTimers();
+    try {
+      recorder.idleListen('./recordings');
+      const stream = recorderLib.__lastRecording.__stream;
+      const errorHandler = stream.on.mock.calls.find(([event]) => event === 'error');
+      expect(errorHandler).toBeDefined();
+
+      recorder.stop();
+      recorderLib.record.mockClear();
+      fs.createWriteStream.mockClear();
+
+      // Error fires after stop() -- should be silently ignored.
+      errorHandler[1](new Error('sox has exited with error code null'));
+      jest.advanceTimersByTime(600);
+
+      expect(recorderLib.record).not.toHaveBeenCalled();
+      expect(recorder.idle).toBe(false);
     } finally {
       jest.useRealTimers();
     }

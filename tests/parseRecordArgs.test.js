@@ -10,6 +10,9 @@ function expectShape(overrides = {}) {
     transcribe: false,
     noTranscribe: false,
     transcribeModel: null,
+    transcribeLanguage: null,
+    multilingual: false,
+    transcribeModelPreset: null,
     transcribeMinPeak: null,
     transcribeQueueMax: null,
     trace: false,
@@ -82,5 +85,49 @@ describe('parseRecordArgs', () => {
 
   test('rejects --transcribe together with --no-transcribe', () => {
     expect(parseRecordArgs(['--transcribe', '--no-transcribe']).error).toMatch(/cannot use --transcribe together/);
+  });
+
+  test('parses --language for whisper.cpp -l', () => {
+    expect(parseRecordArgs(['--language', 'hi', '--duration', '1'])).toEqual(
+      expectShape({ transcribeLanguage: 'hi', durationSeconds: 1 }),
+    );
+  });
+
+  test('parses --duration-minutes as seconds (e.g. 10 → 600)', () => {
+    expect(parseRecordArgs(['--duration-minutes', '10', '--name', 'x'])).toEqual(
+      expectShape({ durationSeconds: 600, name: 'x' }),
+    );
+    expect(parseRecordArgs(['--duration-minutes=0.5'])).toEqual(expectShape({ durationSeconds: 30 }));
+  });
+
+  test('rejects --duration together with --duration-minutes', () => {
+    expect(parseRecordArgs(['--duration', '60', '--duration-minutes', '1']).error).toMatch(
+      /cannot use --duration together with --duration-minutes/,
+    );
+  });
+
+  test('parses --multilingual', () => {
+    expect(parseRecordArgs(['--multilingual', '--duration', '1'])).toEqual(
+      expectShape({ multilingual: true, durationSeconds: 1 }),
+    );
+  });
+
+  test('parses --medium, -m, --large, -l', () => {
+    expect(parseRecordArgs(['--medium', '--duration', '1'])).toEqual(
+      expectShape({ transcribeModelPreset: 'medium', durationSeconds: 1 }),
+    );
+    expect(parseRecordArgs(['-m', '--duration', '1'])).toEqual(
+      expectShape({ transcribeModelPreset: 'medium', durationSeconds: 1 }),
+    );
+    expect(parseRecordArgs(['--large', '--duration', '1'])).toEqual(
+      expectShape({ transcribeModelPreset: 'large', durationSeconds: 1 }),
+    );
+    expect(parseRecordArgs(['-l', '--duration', '1'])).toEqual(
+      expectShape({ transcribeModelPreset: 'large', durationSeconds: 1 }),
+    );
+  });
+
+  test('rejects --medium with --large', () => {
+    expect(parseRecordArgs(['--medium', '--large']).error).toMatch(/cannot use --medium together/);
   });
 });

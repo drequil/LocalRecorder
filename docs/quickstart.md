@@ -3,7 +3,7 @@
 All commands assume your current directory is the repo root. By default,
 output lands under `./recordings/<YYYY-MM-DD>/` (and `./recordings/<YYYY-MM-DD>/<name>/`
 when you use `--name`). Override the root with **`--root`**, or set a machine default
-with **`%USERPROFILE%\.localrecorder\config.json`** (JSON: `"recordingsRoot": "D:/recordings"`).
+with **`%USERPROFILE%\.localrecorder\config.json`** (see **`docs/localrecorder-config.example.json`** — optional keys include `recordingsRoot`, `transcribeModel`, `transcribeLanguage`).
 A positional path still wins and skips the auto-layout.
 
 ## Quick reference
@@ -34,7 +34,7 @@ A positional path still wins and skips the auto-layout.
 | `--name <label>` | `./recordings/<YYYY-MM-DD>/<label>/` (label auto-slugified) |
 | `--root <dir> [--name <label>]` | `<dir>/<YYYY-MM-DD>/` or `<dir>/<YYYY-MM-DD>/<label>/` |
 | JSON config `recordingsRoot` (no `--root`) | Same layout as above, but under that root instead of `./recordings` |
-| `LOCALRECORDER_CONFIG` env | Path to a JSON file with `recordingsRoot` — checked **before** `%USERPROFILE%\.localrecorder\config.json` |
+| `LOCALRECORDER_CONFIG` env | Path to a JSON file — same keys as above; checked **before** `%USERPROFILE%\.localrecorder\config.json` |
 | positional `<dir>` to `idle` | `<dir>/` verbatim — bypasses the auto-layout entirely |
 | positional `<file>` to `record` | `<file>` verbatim — bypasses the auto-layout entirely |
 
@@ -90,6 +90,12 @@ before exit.
 **`idle`** does **not** auto-enable transcription when the model exists (every chunk would
 spawn whisper without an explicit opt-in). Use `idle … --transcribe` there.
 
+### Other languages (e.g. Hindi)
+
+Whisper needs a **multilingual** model file (e.g. `ggml-base.bin`, `ggml-small.bin`) — **not**
+the `*.en.bin` English-only checkpoints. Download the matching `.bin` from the same
+[Hugging Face whisper.cpp tree](https://huggingface.co/ggerganov/whisper.cpp/tree/main), then pass **`--language hi`** on **`record`**, **`idle`**, or **`transcribe`** (maps to whisper.cpp **`-l hi`**). Use **`--language auto`** to let whisper pick the language.
+
 In some audio environments sox's silence detector misfires (room noise floor fluctuates around the threshold), rotating chunks every few seconds. Pass `--silence 0` to bypass it entirely; chunks then rotate **only** on `--max-chunk-seconds`. For a meeting you usually want 5-minute chunks:
 
 ```cmd
@@ -118,6 +124,16 @@ node src/index.js idle --name $(Get-Date -Format yyyyMMdd-HHmm) `
 
 That lands under `D:\recordings\2026-05-12\20260512-1700\` (date + name) as `chunk-*.wav` +
 `.json` + `.txt` + `.md` — and the repo tree stays clean if you rely on the config root.
+
+### Multilingual `ggml-base.bin`, config `transcribeLanguage: "en"`, and `--multilingual`
+
+On the first **`record`**, **`idle`**, or **`transcribe`** run, if `%USERPROFILE%\.localrecorder\config.json` is missing, LocalRecorder **creates** it with defaults (`models/ggml-base.en.bin` + `transcribeLanguage: "en"`). Adjust paths there or use `LOCALRECORDER_CONFIG`.
+
+1. **`--multilingual`** uses **`models/ggml-base.bin`** (multilingual), **downloads it if missing** (~140 MB), and **does not pass `-l`** to whisper (good for mixed languages). If you also pass **`--model`**, that file is used instead (still no `-l`).
+
+2. Optional manual download: `npm run model:download-base`
+
+3. Copy **`docs/localrecorder-config.example.json`** as a starting point if you prefer to author the file yourself.
 
 ## When something goes wrong
 

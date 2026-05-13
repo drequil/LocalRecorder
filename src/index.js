@@ -4,7 +4,16 @@ const AudioRecorder = require('./audioRecorder');
 const { enumerateDevices } = require('./audioDevices');
 const { peak16LE, toDb, renderBar } = require('./audioLevels');
 const { resolveRecordPath, resolveIdleDirectory } = require('./recordingPaths');
-const { effectiveRecordingsRoot } = require('./userConfig');
+const {
+  effectiveRecordingsRoot,
+  loadUserConfig,
+  mergeTranscribeFieldsFromUserConfig,
+  ensureDefaultUserConfigIfMissing,
+  multilingualWhisperLanguageHint,
+} = require('./userConfig');
+const { downloadGgmlBaseBinIfMissing } = require('./downloadGgmlBaseBin');
+const { resolveMultilingualModel } = require('./resolveMultilingualModel');
+const { parsePresetFlags, resolvePresetModelAbs } = require('./whisperModelPreset');
 const {
   DEFAULT_MODEL_PATH,
   transcribeFile,
@@ -44,7 +53,32 @@ const COERCERS = {
     }
     return { value: raw };
   },
+  whisperLang(raw) {
+    const t = typeof raw === 'string' ? raw.trim() : '';
+    if (t.length === 0) {
+      return { error: 'must be a non-empty whisper language code (e.g. hi, en, auto)' };
+    }
+    if (t.length > 32) {
+      return { error: `must be at most 32 characters, got ${t.length}` };
+    }
+    if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(t)) {
+      return {
+        error:
+          `invalid language code ${JSON.stringify(raw)} — use letters, digits, hyphen, underscore (e.g. hi, auto)`,
+      };
+    }
+    return { value: t };
+  },
 };
+
+/** Map -m / -l to long flags (transcribe model presets; language stays --language). */
+function expandWhisperPresetShortFlags(args) {
+  return args.map((a) => {
+    if (a === '-m') return '--medium';
+    if (a === '-l') return '--large';
+    return a;
+  });
+}
 
 function parseSubcommandArgs(args, flagSpec) {
   const flags = {};
@@ -87,14 +121,54 @@ function parseSubcommandArgs(args, flagSpec) {
   return { flags, positional };
 }
 
+/** --duration vs --duration-minutes (mutually exclusive); minutes → seconds. */
+function resolveDurationFromFlags(flags) {
+  const sec = flags.durationSeconds != null ? flags.durationSeconds : null;
+  const min = flags.durationMinutes != null ? flags.durationMinutes : null;
+  if (sec != null && min != null) {
+    return { error: 'cannot use --duration together with --duration-minutes' };
+  }
+  if (min != null) {
+    return { durationSeconds: min * 60 };
+  }
+  return { durationSeconds: sec };
+}
+
+/** Idle CLI: default 30s timed chunks, silence detector off; see help. */
+function resolveIdleChunkKnobs(parsed) {
+  let idleSilenceSeconds = parsed.idleSilenceSeconds;
+  let maxChunkSeconds = parsed.maxChunkSeconds;
+  const sUnset = idleSilenceSeconds == null;
+  const mUnset = maxChunkSeconds == null;
+
+  if (sUnset && mUnset) {
+    return { idleSilenceSeconds: 0, maxChunkSeconds: 30 };
+  }
+  if (sUnset && !mUnset) {
+    return { idleSilenceSeconds: 0, maxChunkSeconds };
+  }
+  if (!sUnset && mUnset) {
+    if (idleSilenceSeconds === 0) {
+      return { idleSilenceSeconds: 0, maxChunkSeconds: 30 };
+    }
+    return { idleSilenceSeconds, maxChunkSeconds: 0 };
+  }
+  return { idleSilenceSeconds, maxChunkSeconds };
+}
+
 const RECORD_FLAGS = {
   '--duration': { type: 'positiveNumber', as: 'durationSeconds' },
+  '--duration-minutes': { type: 'positiveNumber', as: 'durationMinutes' },
   '--device': { type: 'string', as: 'device' },
   '--name': { type: 'string', as: 'name' },
   '--root': { type: 'string', as: 'root' },
   '--transcribe': { type: 'flag', as: 'transcribe' },
   '--no-transcribe': { type: 'flag', as: 'noTranscribe' },
   '--model': { type: 'string', as: 'transcribeModel' },
+  '--language': { type: 'whisperLang', as: 'transcribeLanguage' },
+  '--multilingual': { type: 'flag', as: 'multilingual' },
+  '--medium': { type: 'flag', as: 'medium' },
+  '--large': { type: 'flag', as: 'large' },
   '--transcribe-min-peak': { type: 'percent', as: 'transcribeMinPeak' },
   '--transcribe-queue-max': { type: 'positiveNumber', as: 'transcribeQueueMax' },
   '--trace': { type: 'flag', as: 'trace' },
@@ -109,10 +183,15 @@ const IDLE_FLAGS = {
   '--device': { type: 'string', as: 'device' },
   '--max-chunk-seconds': { type: 'positiveNumber', as: 'maxChunkSeconds' },
   '--duration': { type: 'positiveNumber', as: 'durationSeconds' },
+  '--duration-minutes': { type: 'positiveNumber', as: 'durationMinutes' },
   '--name': { type: 'string', as: 'name' },
   '--root': { type: 'string', as: 'root' },
   '--transcribe': { type: 'flag', as: 'transcribe' },
   '--model': { type: 'string', as: 'transcribeModel' },
+  '--language': { type: 'whisperLang', as: 'transcribeLanguage' },
+  '--multilingual': { type: 'flag', as: 'multilingual' },
+  '--medium': { type: 'flag', as: 'medium' },
+  '--large': { type: 'flag', as: 'large' },
   // T-5: peak gating. Accepts a number in [0, 1]; 0 disables the gate.
   // Validated as `percent` to reuse the 0..100 / 0..1 dual-parse helper.
   '--transcribe-min-peak': { type: 'percent', as: 'transcribeMinPeak' },
@@ -127,6 +206,10 @@ const LISTEN_FLAGS = {
 
 const TRANSCRIBE_FLAGS = {
   '--model': { type: 'string', as: 'model' },
+  '--language': { type: 'whisperLang', as: 'language' },
+  '--multilingual': { type: 'flag', as: 'multilingual' },
+  '--medium': { type: 'flag', as: 'medium' },
+  '--large': { type: 'flag', as: 'large' },
   '--json': { type: 'flag', as: 'json' },
 };
 
@@ -136,40 +219,51 @@ function printHelp() {
   console.log('Subcommands:');
   console.log('  devices                                                List audio input devices visible to sox');
   console.log('  listen   [--device <id>]                               Live peak-level meter (no file written)');
-  console.log('  record   [<out.wav>] [--name <label>] [--root <dir>]   Record one WAV');
-  console.log('           [--duration N] [--device <id>] [--transcribe | --no-transcribe] [--model <path>]');
-  console.log('           [--transcribe-min-peak P] [--transcribe-queue-max N] [--trace]');
-  console.log('  idle     [<directory>] [--name <label>] [--root <dir>] Per-silence WAV chunks + JSON sidecars');
+  console.log('  record   [<out.wav>] [--name <label>] [--root <dir>]   Continuous recording to one WAV (safety max: 4 h)');
+  console.log('           [--duration N | --duration-minutes N] [--device <id>] [--transcribe | --no-transcribe] [--model <path>] [--medium|-m] [--large|-l]');
+  console.log('           [--language <code>] [--multilingual] [--transcribe-min-peak P] [--transcribe-queue-max N] [--trace]');
+  console.log('  chunk    [<directory>] [--name <label>] [--root <dir>]  Chunked WAV + JSON sidecars (default: 30 s chunks, silence detector off)');
+  console.log('  idle     <same as chunk — legacy alias>');
   console.log('           [--threshold P] [--silence N] [--device <id>]');
-  console.log('           [--duration N] [--max-chunk-seconds N]');
-  console.log('           [--transcribe] [--model <path>] [--trace]');
+  console.log('           [--duration N | --duration-minutes N] [--max-chunk-seconds N]');
+  console.log('           [--transcribe] [--model <path>] [--medium|-m] [--large|-l] [--language <code>] [--multilingual] [--trace]');
   console.log('           [--transcribe-min-peak P] [--transcribe-queue-max N]');
-  console.log('  transcribe <file.wav> [--model <path>] [--json]        Transcribe one WAV via whisper.cpp CLI');
+  console.log('  transcribe <file.wav> [--model <path>] [--medium|-m] [--large|-l] [--language <code>] [--multilingual] [--json]');
   console.log('  help                                                   Show this help');
   console.log('');
   console.log('Output layout:');
   console.log('  --name <label>          <root>/<YYYY-MM-DD>/<label>/<label>-<ts>.wav (record)');
-  console.log('                          <root>/<YYYY-MM-DD>/<label>/chunk-<ts>-<ms>.wav (idle)');
+  console.log('                          <root>/<YYYY-MM-DD>/<label>/chunk-<ts>-<ms>.wav (chunk/idle)');
   console.log('  no name                 <root>/<YYYY-MM-DD>/recording-<ts>.wav (record)');
-  console.log('                          <root>/<YYYY-MM-DD>/chunk-<ts>-<ms>.wav (idle)');
+  console.log('                          <root>/<YYYY-MM-DD>/chunk-<ts>-<ms>.wav (chunk/idle)');
   console.log('  explicit positional     written literally; --name / --root / config ignored');
   console.log('  default <root>          ./recordings, or recordingsRoot in JSON config (see below)');
   console.log('  --root <dir>            override config and default ./recordings');
   console.log('');
   console.log('Config (optional):');
-  console.log('  %USERPROFILE%\\.localrecorder\\config.json   JSON: { "recordingsRoot": "D:/recordings" }');
+  console.log('  %USERPROFILE%\\.localrecorder\\config.json   JSON: { "recordingsRoot": "D:/recordings", "transcribeModel": "models/ggml-base.en.bin", "transcribeLanguage": "en" }');
   console.log('  LOCALRECORDER_CONFIG=<path>                 path to the same JSON shape');
+  console.log('  See docs/localrecorder-config.example.json');
   console.log('');
   console.log('Flag notes:');
-  console.log('  --duration N            Stop after N seconds (record + idle, positive number)');
-  console.log('  --threshold P           Silence threshold percent (0..100; default 0.5)');
-  console.log('  --silence N             Silence duration before rotation, seconds (default 1.0; 0 disables sox silence detector -> rotate only on --max-chunk-seconds)');
+  console.log('  --duration N            Stop after N seconds (record + idle; positive number).');
+  console.log('  --duration-minutes N    Same as --duration N×60 (e.g. 10 → 10 minutes). Mutually exclusive with --duration.');
+  console.log('  --threshold P           Idle: sox silence % (0..100; default 0.1). Ignored when --silence 0.');
+  console.log('  --silence N             Idle: seconds below threshold before rotating (0 = off). Default with no flags: 0 (use --max-chunk-seconds only).');
   console.log('  --device <id>           Audio input device id (Windows waveaudio index; default 0)');
-  console.log('  --max-chunk-seconds N   Force-rotate a chunk after N seconds even without silence');
+  console.log('  --max-chunk-seconds N   Idle: force new chunk after N seconds. Default with no flags: 30. Combine with --silence > 0 to cap long speech runs.');
   console.log('  --transcribe            Force auto-transcribe (idle: each chunk; record: at end). On record, this is optional if the model file already exists — see below.');
   console.log('  --no-transcribe         record only: never run whisper after capture (WAV + sidecar only)');
-  console.log('  --model <path>          Whisper.cpp ggml model path (default ./models/ggml-base.en.bin)');
-  console.log('  record + default model: If ./models/ggml-base.en.bin exists, transcribe runs automatically after Ctrl+C or --duration without any flags. Use --no-transcribe to skip.');
+  console.log('  --model <path>          Whisper.cpp ggml model (default ./models/ggml-base.en.bin). Non-English needs multilingual *.bin, not *.en.bin.');
+  console.log('  --medium, -m            Use ./models/ggml-medium.bin when --model is omitted (slower, better quality).');
+  console.log('  --large, -l             Use ./models/ggml-large-v3.bin when --model is omitted (slowest preset).');
+  console.log('                          --model wins over --medium/--large if both are set.');
+  console.log('  --language <code>       whisper.cpp -l: source language (hi, zh, en, auto, …). Config default applies except with --multilingual (then only CLI counts).');
+  console.log('  --multilingual          Multilingual checkpoint; default models/ggml-base.bin (download if missing).');
+  console.log('                          Omits -l for auto-detect unless you pass --language (use --language zh for Chinese).');
+  console.log('                          With --model *.en.bin, uses sibling *.bin in the same folder (e.g. ggml-base.bin).');
+  console.log('  record + default model: If ./models/ggml-base.en.bin exists, transcribe runs automatically after stop. Use --no-transcribe to skip.');
+  console.log('  record safety max:      No --duration? Recording stops automatically after 4 hours.');
   console.log('  --transcribe-min-peak P Skip chunks whose sidecar peak < P (default 0.005 / ~-46 dBFS); 0 disables');
   console.log('  --transcribe-queue-max N  Warn when transcription queue depth > N (default 5); 0 disables');
   console.log('  --trace                 Verbose stderr traces (also LOCALRECORDER_TRACE=1)');
@@ -177,22 +271,29 @@ function printHelp() {
 }
 
 function parseRecordArgs(args) {
-  const parsed = parseSubcommandArgs(args, RECORD_FLAGS);
+  const parsed = parseSubcommandArgs(expandWhisperPresetShortFlags(args), RECORD_FLAGS);
   if (parsed.error) return { error: parsed.error };
   const { flags, positional } = parsed;
+  const pr = parsePresetFlags(flags);
+  if (pr.error) return { error: pr.error };
   if (flags.transcribe === true && flags.noTranscribe === true) {
     return { error: 'cannot use --transcribe together with --no-transcribe' };
   }
+  const dur = resolveDurationFromFlags(flags);
+  if (dur.error) return { error: dur.error };
   if (positional.length > 1) return { error: `unexpected extra argument: ${positional[1]}` };
   return {
     output: positional[0] != null ? positional[0] : null,
-    durationSeconds: flags.durationSeconds != null ? flags.durationSeconds : null,
+    durationSeconds: dur.durationSeconds,
     device: flags.device != null ? flags.device : null,
     name: flags.name != null ? flags.name : null,
     root: flags.root != null ? flags.root : null,
     transcribe: flags.transcribe === true,
     noTranscribe: flags.noTranscribe === true,
     transcribeModel: flags.transcribeModel != null ? flags.transcribeModel : null,
+    transcribeLanguage: flags.transcribeLanguage != null ? flags.transcribeLanguage : null,
+    multilingual: flags.multilingual === true,
+    transcribeModelPreset: pr.transcribeModelPreset,
     transcribeMinPeak: flags.transcribeMinPeak != null ? flags.transcribeMinPeak : null,
     transcribeQueueMax: flags.transcribeQueueMax != null ? flags.transcribeQueueMax : null,
     trace: flags.trace === true,
@@ -200,9 +301,13 @@ function parseRecordArgs(args) {
 }
 
 function parseIdleArgs(args) {
-  const parsed = parseSubcommandArgs(args, IDLE_FLAGS);
+  const parsed = parseSubcommandArgs(expandWhisperPresetShortFlags(args), IDLE_FLAGS);
   if (parsed.error) return { error: parsed.error };
   const { flags, positional } = parsed;
+  const pr = parsePresetFlags(flags);
+  if (pr.error) return { error: pr.error };
+  const dur = resolveDurationFromFlags(flags);
+  if (dur.error) return { error: dur.error };
   if (positional.length > 1) return { error: `unexpected extra argument: ${positional[1]}` };
   return {
     directory: positional[0] != null ? positional[0] : null,
@@ -210,11 +315,14 @@ function parseIdleArgs(args) {
     idleSilenceSeconds: flags.idleSilenceSeconds != null ? flags.idleSilenceSeconds : null,
     device: flags.device != null ? flags.device : null,
     maxChunkSeconds: flags.maxChunkSeconds != null ? flags.maxChunkSeconds : null,
-    durationSeconds: flags.durationSeconds != null ? flags.durationSeconds : null,
+    durationSeconds: dur.durationSeconds,
     name: flags.name != null ? flags.name : null,
     root: flags.root != null ? flags.root : null,
     transcribe: flags.transcribe === true,
     transcribeModel: flags.transcribeModel != null ? flags.transcribeModel : null,
+    transcribeLanguage: flags.transcribeLanguage != null ? flags.transcribeLanguage : null,
+    multilingual: flags.multilingual === true,
+    transcribeModelPreset: pr.transcribeModelPreset,
     transcribeMinPeak: flags.transcribeMinPeak != null ? flags.transcribeMinPeak : null,
     transcribeQueueMax: flags.transcribeQueueMax != null ? flags.transcribeQueueMax : null,
     trace: flags.trace === true,
@@ -232,14 +340,19 @@ function parseListenArgs(args) {
 }
 
 function parseTranscribeArgs(args) {
-  const parsed = parseSubcommandArgs(args, TRANSCRIBE_FLAGS);
+  const parsed = parseSubcommandArgs(expandWhisperPresetShortFlags(args), TRANSCRIBE_FLAGS);
   if (parsed.error) return { error: parsed.error };
   const { flags, positional } = parsed;
+  const pr = parsePresetFlags(flags);
+  if (pr.error) return { error: pr.error };
   if (positional.length === 0) return { error: 'transcribe requires a <file.wav> positional argument' };
   if (positional.length > 1) return { error: `unexpected extra argument: ${positional[1]}` };
   return {
     wav: positional[0],
     model: flags.model != null ? flags.model : null,
+    language: flags.language != null ? flags.language : null,
+    multilingual: flags.multilingual === true,
+    transcribeModelPreset: pr.transcribeModelPreset,
     json: flags.json === true,
   };
 }
@@ -333,12 +446,46 @@ async function runTranscribe(args = []) {
     console.error(`Error: ${parsed.error}`);
     return 1;
   }
-  const model = parsed.model || DEFAULT_MODEL_PATH;
-  trace('transcribe-cli', 'one-shot transcribe', { wav: parsed.wav, model });
+  ensureDefaultUserConfigIfMissing();
+  const userCfg = loadUserConfig();
+  let model;
+  let language;
+  const hasExplicitModel = parsed.model != null && String(parsed.model).trim() !== '';
+  if (parsed.multilingual) {
+    try {
+      model = await resolveMultilingualModel({
+        cliModelPath: hasExplicitModel ? parsed.model : null,
+        preset: hasExplicitModel ? null : parsed.transcribeModelPreset,
+        cwd: process.cwd(),
+        log: console.log,
+        downloadGgmlBaseBinIfMissing,
+      });
+    } catch (err) {
+      console.error(`Error: ${err.message}`);
+      return 1;
+    }
+    language = multilingualWhisperLanguageHint(parsed.language);
+  } else {
+    let modelRaw;
+    if (hasExplicitModel) {
+      modelRaw = parsed.model;
+    } else if (parsed.transcribeModelPreset === 'medium' || parsed.transcribeModelPreset === 'large') {
+      modelRaw = resolvePresetModelAbs(process.cwd(), parsed.transcribeModelPreset);
+    } else {
+      modelRaw = userCfg.transcribeModel || DEFAULT_MODEL_PATH;
+    }
+    model = path.isAbsolute(modelRaw) ? path.normalize(modelRaw) : path.resolve(process.cwd(), modelRaw);
+    if (parsed.language != null && String(parsed.language).trim() !== '') {
+      language = parsed.language;
+    } else {
+      language = userCfg.transcribeLanguage;
+    }
+  }
+  trace('transcribe-cli', 'one-shot transcribe', { wav: parsed.wav, model, language: language || null });
 
   let result;
   try {
-    result = await transcribeFile({ wav: parsed.wav, model });
+    result = await transcribeFile({ wav: parsed.wav, model, language });
   } catch (err) {
     console.error(`Error: ${err.message}`);
     if (err.stderr) {
@@ -354,6 +501,7 @@ async function runTranscribe(args = []) {
       text: result.text,
       model: result.model,
       wav: result.wav,
+      language: result.language,
       durationMs: result.durationMs,
       binary: result.binary,
       txtPath: result.txtPath,
@@ -416,11 +564,17 @@ async function main(argv) {
     return runTranscribe(tail);
   }
 
-  if (!['record', 'idle'].includes(command)) {
+  // 'chunk' is the user-facing alias for 'idle'.
+  const effectiveCommand = command === 'chunk' ? 'idle' : command;
+
+  if (!['record', 'idle'].includes(effectiveCommand)) {
     console.error(`Unknown command: ${command}`);
     printHelp();
     return 1;
   }
+
+  // Safety maximum for continuous record with no explicit duration.
+  const RECORD_SAFETY_MAX_SECONDS = 4 * 60 * 60; // 4 hours
 
   let recordTarget;
   let idleDirectory;
@@ -428,7 +582,7 @@ async function main(argv) {
   let durationSeconds = null;
   let recorderOptions = {};
 
-  if (command === 'record') {
+  if (effectiveCommand === 'record') {
     let parsed = parseRecordArgs(tail);
     if (parsed.error) {
       console.error(`Error: ${parsed.error}`);
@@ -436,6 +590,13 @@ async function main(argv) {
     }
     if (parsed.trace) {
       enableTraceFromCli();
+    }
+    ensureDefaultUserConfigIfMissing();
+    try {
+      parsed = await mergeTranscribeFieldsFromUserConfig(parsed, loadUserConfig());
+    } catch (err) {
+      console.error(`Error: ${err.message}`);
+      return 1;
     }
     parsed = applyRecordAutoTranscribe(parsed);
     const modelPathForCheck = path.isAbsolute(parsed.transcribeModel || DEFAULT_MODEL_PATH)
@@ -466,16 +627,17 @@ async function main(argv) {
     });
     recordTarget = resolved.filePath;
     sessionDir = resolved.sessionDir;
-    durationSeconds = parsed.durationSeconds;
+    durationSeconds = parsed.durationSeconds ?? RECORD_SAFETY_MAX_SECONDS;
     recorderOptions = compactOptions({
       device: parsed.device,
       transcribe: parsed.transcribe,
       transcribeModel: parsed.transcribeModel,
+      transcribeLanguage: parsed.transcribeLanguage,
       transcribeMinPeak: parsed.transcribeMinPeak,
       transcribeQueueMax: parsed.transcribeQueueMax,
     });
   } else {
-    const parsed = parseIdleArgs(tail);
+    let parsed = parseIdleArgs(tail);
     if (parsed.error) {
       console.error(`Error: ${parsed.error}`);
       return 1;
@@ -483,11 +645,21 @@ async function main(argv) {
     if (parsed.trace) {
       enableTraceFromCli();
     }
+    ensureDefaultUserConfigIfMissing();
+    try {
+      parsed = await mergeTranscribeFieldsFromUserConfig(parsed, loadUserConfig());
+    } catch (err) {
+      console.error(`Error: ${err.message}`);
+      return 1;
+    }
     // Up-front model check: if the user asked for --transcribe but the model
     // file doesn't exist, fail fast instead of capturing for an hour and then
     // surfacing "transcribe failed" on every single chunk.
     if (parsed.transcribe) {
-      const modelPath = parsed.transcribeModel || DEFAULT_MODEL_PATH;
+      const modelRel = parsed.transcribeModel || DEFAULT_MODEL_PATH;
+      const modelPath = path.isAbsolute(modelRel)
+        ? path.normalize(modelRel)
+        : path.resolve(process.cwd(), modelRel);
       if (!fs.existsSync(modelPath)) {
         console.error(`Error: --transcribe is set but model file not found: ${modelPath}`);
         console.error('  Pass --model <path>, or download a model:');
@@ -509,13 +681,15 @@ async function main(argv) {
     idleDirectory = resolved.sessionDir;
     sessionDir = resolved.sessionDir;
     durationSeconds = parsed.durationSeconds;
+    const chunkKnobs = resolveIdleChunkKnobs(parsed);
     recorderOptions = compactOptions({
       device: parsed.device,
       idleThreshold: parsed.idleThreshold,
-      idleSilenceSeconds: parsed.idleSilenceSeconds,
-      maxChunkSeconds: parsed.maxChunkSeconds,
+      idleSilenceSeconds: chunkKnobs.idleSilenceSeconds,
+      maxChunkSeconds: chunkKnobs.maxChunkSeconds,
       transcribe: parsed.transcribe,
       transcribeModel: parsed.transcribeModel,
+      transcribeLanguage: parsed.transcribeLanguage,
       transcribeMinPeak: parsed.transcribeMinPeak,
       transcribeQueueMax: parsed.transcribeQueueMax,
     });
@@ -533,14 +707,21 @@ async function main(argv) {
 
   const recorder = new AudioRecorder(recorderOptions);
   trace('cli', 'AudioRecorder constructed', {
-    command,
+    command: effectiveCommand,
     transcribe: !!recorderOptions.transcribe,
     transcribeModel: recorderOptions.transcribeModel,
+    transcribeLanguage: recorderOptions.transcribeLanguage,
     sessionDir,
-    ...(command === 'record' ? { recordTarget } : { idleDirectory }),
+    ...(effectiveCommand === 'record' ? { recordTarget } : { idleDirectory }),
+    ...(effectiveCommand === 'idle'
+      ? {
+          idleSilenceSeconds: recorderOptions.idleSilenceSeconds,
+          maxChunkSeconds: recorderOptions.maxChunkSeconds,
+        }
+      : {}),
   });
-  if (command === 'idle') {
-    console.log(`Idle session directory: ${idleDirectory}`);
+  if (effectiveCommand === 'idle') {
+    console.log(`Chunk session directory: ${idleDirectory}`);
     recorder.idleListen(idleDirectory);
   } else {
     recorder.start(recordTarget);
@@ -632,6 +813,7 @@ module.exports = {
   parseTranscribeArgs,
   parseSubcommandArgs,
   applyRecordAutoTranscribe,
+  resolveIdleChunkKnobs,
   trace,
   enableTraceFromCli,
 };

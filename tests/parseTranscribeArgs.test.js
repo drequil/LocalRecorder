@@ -5,6 +5,9 @@ describe('parseTranscribeArgs', () => {
     expect(parseTranscribeArgs(['hello.wav'])).toEqual({
       wav: 'hello.wav',
       model: null,
+      language: null,
+      multilingual: false,
+      transcribeModelPreset: null,
       json: false,
     });
   });
@@ -13,6 +16,9 @@ describe('parseTranscribeArgs', () => {
     expect(parseTranscribeArgs(['--model', 'models/small.en.bin', 'hello.wav'])).toEqual({
       wav: 'hello.wav',
       model: 'models/small.en.bin',
+      language: null,
+      multilingual: false,
+      transcribeModelPreset: null,
       json: false,
     });
   });
@@ -21,6 +27,9 @@ describe('parseTranscribeArgs', () => {
     expect(parseTranscribeArgs(['hello.wav', '--model', 'models/small.en.bin'])).toEqual({
       wav: 'hello.wav',
       model: 'models/small.en.bin',
+      language: null,
+      multilingual: false,
+      transcribeModelPreset: null,
       json: false,
     });
   });
@@ -29,6 +38,9 @@ describe('parseTranscribeArgs', () => {
     expect(parseTranscribeArgs(['hello.wav', '--model=models/medium.en.bin'])).toEqual({
       wav: 'hello.wav',
       model: 'models/medium.en.bin',
+      language: null,
+      multilingual: false,
+      transcribeModelPreset: null,
       json: false,
     });
   });
@@ -37,6 +49,9 @@ describe('parseTranscribeArgs', () => {
     expect(parseTranscribeArgs(['hello.wav', '--json'])).toEqual({
       wav: 'hello.wav',
       model: null,
+      language: null,
+      multilingual: false,
+      transcribeModelPreset: null,
       json: true,
     });
   });
@@ -45,8 +60,45 @@ describe('parseTranscribeArgs', () => {
     expect(parseTranscribeArgs(['--json', '--model', 'm.bin', 'hello.wav'])).toEqual({
       wav: 'hello.wav',
       model: 'm.bin',
+      language: null,
+      multilingual: false,
+      transcribeModelPreset: null,
       json: true,
     });
+  });
+
+  test('parses --language', () => {
+    expect(parseTranscribeArgs(['hello.wav', '--language', 'hi'])).toEqual({
+      wav: 'hello.wav',
+      model: null,
+      language: 'hi',
+      multilingual: false,
+      transcribeModelPreset: null,
+      json: false,
+    });
+    expect(parseTranscribeArgs(['--language', 'auto', 'hello.wav'])).toEqual({
+      wav: 'hello.wav',
+      model: null,
+      language: 'auto',
+      multilingual: false,
+      transcribeModelPreset: null,
+      json: false,
+    });
+  });
+
+  test('parses --multilingual', () => {
+    expect(parseTranscribeArgs(['hello.wav', '--multilingual'])).toEqual({
+      wav: 'hello.wav',
+      model: null,
+      language: null,
+      multilingual: true,
+      transcribeModelPreset: null,
+      json: false,
+    });
+  });
+
+  test('rejects invalid --language', () => {
+    expect(parseTranscribeArgs(['hello.wav', '--language', '9bad']).error).toMatch(/invalid language/);
   });
 
   test('rejects --json=value (presence flag does not take a value)', () => {
@@ -80,5 +132,47 @@ describe('parseTranscribeArgs', () => {
     expect(parseTranscribeArgs(['hello.wav', 'extra.wav'])).toEqual({
       error: expect.stringMatching(/unexpected extra argument: extra\.wav/),
     });
+  });
+
+  test('parses --medium and -m', () => {
+    expect(parseTranscribeArgs(['--medium', 'a.wav'])).toEqual({
+      wav: 'a.wav',
+      model: null,
+      language: null,
+      multilingual: false,
+      transcribeModelPreset: 'medium',
+      json: false,
+    });
+    expect(parseTranscribeArgs(['-m', 'a.wav'])).toEqual({
+      wav: 'a.wav',
+      model: null,
+      language: null,
+      multilingual: false,
+      transcribeModelPreset: 'medium',
+      json: false,
+    });
+  });
+
+  test('parses --large and -l', () => {
+    expect(parseTranscribeArgs(['a.wav', '--large'])).toEqual({
+      wav: 'a.wav',
+      model: null,
+      language: null,
+      multilingual: false,
+      transcribeModelPreset: 'large',
+      json: false,
+    });
+    expect(parseTranscribeArgs(['-l', 'a.wav'])).toEqual({
+      wav: 'a.wav',
+      model: null,
+      language: null,
+      multilingual: false,
+      transcribeModelPreset: 'large',
+      json: false,
+    });
+  });
+
+  test('rejects --medium with --large', () => {
+    expect(parseTranscribeArgs(['a.wav', '--medium', '--large']).error).toMatch(/cannot use --medium together/);
   });
 });

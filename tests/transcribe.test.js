@@ -119,6 +119,18 @@ describe('buildWhisperArgs', () => {
     expect(out).toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '-f', 'a.wav']);
   });
 
+  test('inserts -l <code> before -f when language is set', () => {
+    const out = buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', language: 'hi' });
+    expect(out).toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '-l', 'hi', '-f', 'a.wav']);
+  });
+
+  test('omits -l when language is null or blank', () => {
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', language: null }))
+      .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '-f', 'a.wav']);
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', language: '  ' }))
+      .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '-f', 'a.wav']);
+  });
+
   test('throws on missing model', () => {
     expect(() => buildWhisperArgs({ wav: 'a.wav' })).toThrow(/model is required/);
   });
@@ -216,6 +228,7 @@ describe('transcribeFile', () => {
     expect(out.text).toBe('hello from whisper');
     expect(out.model).toBe(model);
     expect(out.wav).toBe(wav);
+    expect(out.language).toBeNull();
     expect(out.binary).toBe('whisper-cli');
     expect(out.exitCode).toBe(0);
     expect(out.txtPath).toBe(path.join(tmpdir, 'sample.txt'));
@@ -226,6 +239,22 @@ describe('transcribeFile', () => {
     const [actualBinary, actualArgs] = spawnFn.mock.calls[0];
     expect(actualBinary).toBe('whisper-cli');
     expect(actualArgs).toEqual(['--no-prints', '--output-txt', '-m', model, '-f', wav]);
+  });
+
+  test('passes -l to whisper-cli when language is set', async () => {
+    fs.writeFileSync(path.join(tmpdir, 'sample.txt'), 'नमस्ते\n');
+    const spawnFn = makeFakeSpawn({ exitCode: 0 });
+
+    await transcribeFile({
+      wav,
+      model,
+      language: 'hi',
+      binary: 'whisper-cli',
+      spawnFn,
+    });
+
+    const [, actualArgs] = spawnFn.mock.calls[0];
+    expect(actualArgs).toEqual(['--no-prints', '--output-txt', '-m', model, '-l', 'hi', '-f', wav]);
   });
 
   test('throws when wav is missing', async () => {

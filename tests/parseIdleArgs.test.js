@@ -12,6 +12,9 @@ function expectIdleShape(overrides = {}) {
     root: null,
     transcribe: false,
     transcribeModel: null,
+    transcribeLanguage: null,
+    multilingual: false,
+    transcribeModelPreset: null,
     transcribeMinPeak: null,
     transcribeQueueMax: null,
     trace: false,
@@ -51,6 +54,16 @@ describe('parseIdleArgs', () => {
   test('parses --device as a string', () => {
     expect(parseIdleArgs(['./r', '--device', '5']).device).toBe('5');
     expect(parseIdleArgs(['./r', '--device', 'USB Mic']).device).toBe('USB Mic');
+  });
+
+  test('parses --duration-minutes for idle session cap', () => {
+    expect(parseIdleArgs(['./r', '--duration-minutes', '10']).durationSeconds).toBe(600);
+  });
+
+  test('rejects --duration with --duration-minutes on idle', () => {
+    expect(parseIdleArgs(['./r', '--duration', '10', '--duration-minutes', '1']).error).toMatch(
+      /cannot use --duration together with --duration-minutes/,
+    );
   });
 
   test('parses --max-chunk-seconds as a positive number', () => {
