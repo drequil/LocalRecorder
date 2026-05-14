@@ -69,14 +69,20 @@ function isWavFile(filePath) {
 
 // Pure: shape the argv we will hand to spawn. Kept separate so tests can pin the exact
 // flag order without exercising spawn.
-function buildWhisperArgs({ model, wav, language = null }) {
+function buildWhisperArgs({ model, wav, language = null, threads = null }) {
   if (!model) throw new TypeError('buildWhisperArgs: model is required');
   if (!wav) throw new TypeError('buildWhisperArgs: wav is required');
   // --no-prints: suppress whisper-cli's progress chatter so stdout is clean.
   // --output-txt: emit the .txt sibling we will read after exit.
   // -l: whisper.cpp source language (ISO 639-1, e.g. hi, zh, en). Omitted when unset so
   //     whisper auto-detects (good for mixed audio). For CJK, callers often pass -l zh.
+  // -t N: CPU thread count. whisper.cpp defaults to 4; passing the logical
+  //       CPU count (capped at a practical limit) substantially cuts wall-clock
+  //       time on multi-core machines.
   const args = ['--no-prints', '--output-txt', '-m', model];
+  if (threads != null && Number.isInteger(threads) && threads > 0) {
+    args.push('-t', String(threads));
+  }
   if (language != null && String(language).trim() !== '') {
     args.push('-l', String(language).trim());
   }
@@ -114,6 +120,7 @@ async function transcribeFile({
   wav,
   model = DEFAULT_MODEL_PATH,
   language = null,
+  threads = null,
   binary = null,
   spawnFn = spawn,
   resolveBinaryFn = resolveBinary,
@@ -145,7 +152,7 @@ async function transcribeFile({
     );
   }
 
-  const args = buildWhisperArgs({ model, wav, language });
+  const args = buildWhisperArgs({ model, wav, language, threads });
   trace('whisper', 'spawn', { binary: resolvedBinary, args, wav, model, language: language || null });
   const startedAt = Date.now();
 

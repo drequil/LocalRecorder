@@ -38,8 +38,8 @@ function defaultChunkFilename(now = new Date(), suffix = '') {
 // filename convention the installed whisper-cli picked), and return the result.
 // Extracted so the constructor can fall back to it when the caller doesn't
 // inject a custom transcribeFn.
-async function defaultTranscribeRun({ wav, model, language }, { transcribeFn = transcribeFile, fsImpl = fs } = {}) {
-  const result = await transcribeFn({ wav, model, language });
+async function defaultTranscribeRun({ wav, model, language, threads }, { transcribeFn = transcribeFile, fsImpl = fs } = {}) {
+  const result = await transcribeFn({ wav, model, language, threads });
   const ext = path.extname(wav);
   const stem = path.basename(wav, ext);
   const canonical = path.join(path.dirname(wav), `${stem}.txt`);
@@ -215,6 +215,7 @@ class AudioRecorder {
       transcribe = false,
       transcribeModel = DEFAULT_MODEL_PATH,
       transcribeLanguage = null,
+      transcribeThreads = null,
       transcribeFn,
       transcribeLogger = null,
       transcribeMinPeak = 0.005,
@@ -252,6 +253,10 @@ class AudioRecorder {
     // concurrent recorders don't share a worker.
     this.transcribe = transcribe === true;
     this.transcribeModel = transcribeModel;
+    this.transcribeThreads =
+      Number.isInteger(transcribeThreads) && transcribeThreads > 0
+        ? transcribeThreads
+        : null;
     this.transcribeLanguage =
       transcribeLanguage != null && String(transcribeLanguage).trim() !== ''
         ? String(transcribeLanguage).trim()
@@ -455,6 +460,7 @@ class AudioRecorder {
             wav: filePath,
             model: this.transcribeModel,
             language: this.transcribeLanguage,
+            threads: this.transcribeThreads,
           });
         }
       } else {

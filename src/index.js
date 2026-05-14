@@ -1,4 +1,5 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const AudioRecorder = require('./audioRecorder');
 const { enumerateDevices } = require('./audioDevices');
@@ -156,6 +157,16 @@ function resolveIdleChunkKnobs(parsed) {
   return { idleSilenceSeconds, maxChunkSeconds };
 }
 
+// Whisper's beam-search saturates around 8 threads; beyond that extra threads
+// add lock contention. Cap the auto-default so we don't starve other processes
+// on a 24-core machine.
+const WHISPER_MAX_AUTO_THREADS = 8;
+
+function resolveTranscribeThreads(cliValue) {
+  if (cliValue != null && Number.isInteger(cliValue) && cliValue > 0) return cliValue;
+  return Math.min(os.cpus().length, WHISPER_MAX_AUTO_THREADS);
+}
+
 const RECORD_FLAGS = {
   '--duration': { type: 'positiveNumber', as: 'durationSeconds' },
   '--duration-minutes': { type: 'positiveNumber', as: 'durationMinutes' },
@@ -171,6 +182,7 @@ const RECORD_FLAGS = {
   '--large': { type: 'flag', as: 'large' },
   '--transcribe-min-peak': { type: 'percent', as: 'transcribeMinPeak' },
   '--transcribe-queue-max': { type: 'positiveNumber', as: 'transcribeQueueMax' },
+  '--transcribe-threads': { type: 'positiveNumber', as: 'transcribeThreads' },
   '--trace': { type: 'flag', as: 'trace' },
 };
 
@@ -197,6 +209,7 @@ const IDLE_FLAGS = {
   '--transcribe-min-peak': { type: 'percent', as: 'transcribeMinPeak' },
   // T-5: queue backlog warning threshold. 0 disables.
   '--transcribe-queue-max': { type: 'positiveNumber', as: 'transcribeQueueMax' },
+  '--transcribe-threads': { type: 'positiveNumber', as: 'transcribeThreads' },
   '--trace': { type: 'flag', as: 'trace' },
 };
 
@@ -210,6 +223,7 @@ const TRANSCRIBE_FLAGS = {
   '--multilingual': { type: 'flag', as: 'multilingual' },
   '--medium': { type: 'flag', as: 'medium' },
   '--large': { type: 'flag', as: 'large' },
+  '--threads': { type: 'positiveNumber', as: 'transcribeThreads' },
   '--json': { type: 'flag', as: 'json' },
 };
 
@@ -266,6 +280,7 @@ function printHelp() {
   console.log('  record safety max:      No --duration? Recording stops automatically after 4 hours.');
   console.log('  --transcribe-min-peak P Skip chunks whose sidecar peak < P (default 0.005 / ~-46 dBFS); 0 disables');
   console.log('  --transcribe-queue-max N  Warn when transcription queue depth > N (default 5); 0 disables');
+  console.log('  --transcribe-threads N  CPU threads passed to whisper.cpp -t (default: min(cpus, 8))');
   console.log('  --trace                 Verbose stderr traces (also LOCALRECORDER_TRACE=1)');
   console.log('  --json                  Emit transcribe result as JSON instead of plain text');
 }
@@ -296,6 +311,7 @@ function parseRecordArgs(args) {
     transcribeModelPreset: pr.transcribeModelPreset,
     transcribeMinPeak: flags.transcribeMinPeak != null ? flags.transcribeMinPeak : null,
     transcribeQueueMax: flags.transcribeQueueMax != null ? flags.transcribeQueueMax : null,
+    transcribeThreads: flags.transcribeThreads != null ? flags.transcribeThreads : null,
     trace: flags.trace === true,
   };
 }
@@ -325,6 +341,7 @@ function parseIdleArgs(args) {
     transcribeModelPreset: pr.transcribeModelPreset,
     transcribeMinPeak: flags.transcribeMinPeak != null ? flags.transcribeMinPeak : null,
     transcribeQueueMax: flags.transcribeQueueMax != null ? flags.transcribeQueueMax : null,
+    transcribeThreads: flags.transcribeThreads != null ? flags.transcribeThreads : null,
     trace: flags.trace === true,
   };
 }
@@ -353,6 +370,7 @@ function parseTranscribeArgs(args) {
     language: flags.language != null ? flags.language : null,
     multilingual: flags.multilingual === true,
     transcribeModelPreset: pr.transcribeModelPreset,
+    transcribeThreads: flags.transcribeThreads != null ? flags.transcribeThreads : null,
     json: flags.json === true,
   };
 }
@@ -481,11 +499,12 @@ async function runTranscribe(args = []) {
       language = userCfg.transcribeLanguage;
     }
   }
-  trace('transcribe-cli', 'one-shot transcribe', { wav: parsed.wav, model, language: language || null });
+  const threads = resolveTranscribeThreads(parsed.transcribeThreads);
+  trace('transcribe-cli', 'one-shot transcribe', { wav: parsed.wav, model, language: language || null, threads });
 
   let result;
   try {
-    result = await transcribeFile({ wav: parsed.wav, model, language });
+    result = await transcribeFile({ wav: parsed.wav, model, language, threads });
   } catch (err) {
     console.error(`Error: ${err.message}`);
     if (err.stderr) {
@@ -635,6 +654,7 @@ async function main(argv) {
       transcribeLanguage: parsed.transcribeLanguage,
       transcribeMinPeak: parsed.transcribeMinPeak,
       transcribeQueueMax: parsed.transcribeQueueMax,
+      transcribeThreads: resolveTranscribeThreads(parsed.transcribeThreads),
     });
   } else {
     let parsed = parseIdleArgs(tail);
@@ -692,6 +712,7 @@ async function main(argv) {
       transcribeLanguage: parsed.transcribeLanguage,
       transcribeMinPeak: parsed.transcribeMinPeak,
       transcribeQueueMax: parsed.transcribeQueueMax,
+      transcribeThreads: resolveTranscribeThreads(parsed.transcribeThreads),
     });
   }
 
@@ -814,6 +835,8 @@ module.exports = {
   parseSubcommandArgs,
   applyRecordAutoTranscribe,
   resolveIdleChunkKnobs,
+  resolveTranscribeThreads,
+  WHISPER_MAX_AUTO_THREADS,
   trace,
   enableTraceFromCli,
 };

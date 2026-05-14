@@ -131,6 +131,23 @@ describe('buildWhisperArgs', () => {
       .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '-f', 'a.wav']);
   });
 
+  test('inserts -t N after -m when threads is a positive integer', () => {
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', threads: 8 }))
+      .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '-t', '8', '-f', 'a.wav']);
+  });
+
+  test('inserts -t before -l when both are set', () => {
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', threads: 4, language: 'zh' }))
+      .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '-t', '4', '-l', 'zh', '-f', 'a.wav']);
+  });
+
+  test('omits -t when threads is null, 0, or non-integer', () => {
+    const base = ['--no-prints', '--output-txt', '-m', 'm.bin', '-f', 'a.wav'];
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', threads: null })).toEqual(base);
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', threads: 0 })).toEqual(base);
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', threads: 2.5 })).toEqual(base);
+  });
+
   test('throws on missing model', () => {
     expect(() => buildWhisperArgs({ wav: 'a.wav' })).toThrow(/model is required/);
   });
