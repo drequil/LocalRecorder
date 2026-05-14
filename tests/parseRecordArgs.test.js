@@ -18,6 +18,7 @@ function expectShape(overrides = {}) {
     transcribeThreads: null,
     noSpeechThreshold: null,
     entropyThreshold: null,
+    noWhisperServer: false,
     trace: false,
     ...overrides,
   };

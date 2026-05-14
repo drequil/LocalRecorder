@@ -80,4 +80,75 @@ function finalizeWavHeader(filePath) {
   }
 }
 
-module.exports = { finalizeWavHeader, HEADER_SCAN_LIMIT };
+// Async version of finalizeWavHeader using fs.promises for non-blocking I/O.
+// Use this from _attachFinalize (the stream 'close' handler) so the event loop
+// is not stalled while we read and patch the 44-byte WAV preamble.
+async function finalizeWavHeaderAsync(filePath) {
+  const fsp = require('fs').promises;
+  const stat = await fsp.stat(filePath);
+  const fileSize = stat.size;
+  if (fileSize < 44) {
+    throw new Error(`file too small to be a WAV (${fileSize} bytes): ${filePath}`);
+  }
+
+  const fh = await fsp.open(filePath, 'r+');
+  try {
+    const scanLen = Math.min(HEADER_SCAN_LIMIT, fileSize);
+    const scan = Buffer.alloc(scanLen);
+    await fh.read(scan, 0, scanLen, 0);
+
+    if (scan.toString('ascii', 0, 4) !== 'RIFF') {
+      throw new Error(`not a RIFF file (first 4 bytes: ${JSON.stringify(scan.toString('ascii', 0, 4))})`);
+    }
+    if (scan.toString('ascii', 8, 12) !== 'WAVE') {
+      throw new Error(`not a WAVE container (bytes 8-12: ${JSON.stringify(scan.toString('ascii', 8, 12))})`);
+    }
+
+    let cursor = 12;
+    let dataChunkSizeOffset = -1;
+    let dataPayloadOffset = -1;
+    let dataSizeBefore = -1;
+
+    while (cursor + 8 <= scan.length) {
+      const chunkId = scan.toString('ascii', cursor, cursor + 4);
+      const chunkSize = scan.readUInt32LE(cursor + 4);
+      if (chunkId === 'data') {
+        dataChunkSizeOffset = cursor + 4;
+        dataPayloadOffset = cursor + 8;
+        dataSizeBefore = chunkSize;
+        break;
+      }
+      cursor += 8 + chunkSize;
+      if (chunkSize % 2 === 1) cursor += 1;
+    }
+
+    if (dataPayloadOffset < 0) {
+      throw new Error(`no data chunk found in first ${HEADER_SCAN_LIMIT} bytes of ${filePath}`);
+    }
+
+    const trueDataSize = fileSize - dataPayloadOffset;
+    const trueRiffSize = fileSize - 8;
+    const riffSizeBefore = scan.readUInt32LE(4);
+
+    const sizeBuf = Buffer.alloc(4);
+    sizeBuf.writeUInt32LE(trueRiffSize, 0);
+    await fh.write(sizeBuf, 0, 4, 4);
+
+    sizeBuf.writeUInt32LE(trueDataSize, 0);
+    await fh.write(sizeBuf, 0, 4, dataChunkSizeOffset);
+
+    return {
+      filePath,
+      fileSize,
+      dataPayloadOffset,
+      riffSizeBefore,
+      riffSizeAfter: trueRiffSize,
+      dataSizeBefore,
+      dataSizeAfter: trueDataSize,
+    };
+  } finally {
+    await fh.close();
+  }
+}
+
+module.exports = { finalizeWavHeader, finalizeWavHeaderAsync, HEADER_SCAN_LIMIT };

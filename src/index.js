@@ -200,6 +200,7 @@ const RECORD_FLAGS = {
   '--transcribe-threads': { type: 'positiveNumber', as: 'transcribeThreads' },
   '--no-speech-thold': { type: 'positiveNumber', as: 'noSpeechThreshold' },
   '--entropy-thold': { type: 'positiveNumber', as: 'entropyThreshold' },
+  '--no-whisper-server': { type: 'flag', as: 'noWhisperServer' },
   '--trace': { type: 'flag', as: 'trace' },
 };
 
@@ -229,6 +230,7 @@ const IDLE_FLAGS = {
   '--transcribe-threads': { type: 'positiveNumber', as: 'transcribeThreads' },
   '--no-speech-thold': { type: 'positiveNumber', as: 'noSpeechThreshold' },
   '--entropy-thold': { type: 'positiveNumber', as: 'entropyThreshold' },
+  '--no-whisper-server': { type: 'flag', as: 'noWhisperServer' },
   '--trace': { type: 'flag', as: 'trace' },
 };
 
@@ -304,6 +306,7 @@ function printHelp() {
   console.log('  --transcribe-threads N  CPU threads passed to whisper.cpp -t (default: min(cpus, 8))');
   console.log('  --no-speech-thold P     Drop segments whisper rates as non-speech above P (default 0.8; whisper default 0.6)');
   console.log('  --entropy-thold P       Drop uncertain segments above entropy P (default 2.8; whisper default 2.4)');
+  console.log('  --no-whisper-server     Disable persistent whisper-server; spawn whisper-cli per chunk instead');
   console.log('  --trace                 Verbose stderr traces (also LOCALRECORDER_TRACE=1)');
   console.log('  --json                  Emit transcribe result as JSON instead of plain text');
 }
@@ -337,6 +340,7 @@ function parseRecordArgs(args) {
     transcribeThreads: flags.transcribeThreads != null ? flags.transcribeThreads : null,
     noSpeechThreshold: flags.noSpeechThreshold != null ? flags.noSpeechThreshold : null,
     entropyThreshold: flags.entropyThreshold != null ? flags.entropyThreshold : null,
+    noWhisperServer: flags.noWhisperServer === true,
     trace: flags.trace === true,
   };
 }
@@ -369,6 +373,7 @@ function parseIdleArgs(args) {
     transcribeThreads: flags.transcribeThreads != null ? flags.transcribeThreads : null,
     noSpeechThreshold: flags.noSpeechThreshold != null ? flags.noSpeechThreshold : null,
     entropyThreshold: flags.entropyThreshold != null ? flags.entropyThreshold : null,
+    noWhisperServer: flags.noWhisperServer === true,
     trace: flags.trace === true,
   };
 }
@@ -688,6 +693,7 @@ async function main(argv) {
       transcribeThreads: resolveTranscribeThreads(parsed.transcribeThreads),
       noSpeechThreshold: resolveNoSpeechThreshold(parsed.noSpeechThreshold),
       entropyThreshold: resolveEntropyThreshold(parsed.entropyThreshold),
+      useWhisperServer: !parsed.noWhisperServer,
     });
   } else {
     let parsed = parseIdleArgs(tail);
@@ -748,6 +754,7 @@ async function main(argv) {
       transcribeThreads: resolveTranscribeThreads(parsed.transcribeThreads),
       noSpeechThreshold: resolveNoSpeechThreshold(parsed.noSpeechThreshold),
       entropyThreshold: resolveEntropyThreshold(parsed.entropyThreshold),
+      useWhisperServer: !parsed.noWhisperServer,
     });
   }
 

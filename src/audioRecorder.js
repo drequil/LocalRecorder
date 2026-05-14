@@ -2,10 +2,11 @@ require('./recorderPatch'); // must come before node-record-lpcm16 is loaded
 const recorder = require('node-record-lpcm16');
 const fs = require('fs');
 const path = require('path');
+const { peak16LE, toDb } = require('./audioLevels');
 const { filterHallucinations } = require('./hallucination');
-const { finalizeWavHeader } = require('./wavHeaderFix');
+const { finalizeWavHeaderAsync } = require('./wavHeaderFix');
 const { PeakAccumulator } = require('./peakAccumulator');
-const { buildSidecar, writeSidecar, sidecarPathFor } = require('./chunkSidecar');
+const { buildSidecar, sidecarPathFor } = require('./chunkSidecar');
 const { transcribeFile, DEFAULT_MODEL_PATH } = require('./transcribe');
 const { createTranscribeQueue } = require('./transcribeQueue');
 const { formatChunkMarkdown, markdownPathFor } = require('./chunkMarkdown');
@@ -241,13 +242,18 @@ class AudioRecorder {
       transcribeThreads = null,
       noSpeechThreshold = null,
       entropyThreshold = null,
+      useWhisperServer = true,
       transcribeFn,
       transcribeLogger = null,
       transcribeMinPeak = 0.02,
       transcribeQueueMax = 5,
       transcribeRetries = 1,
+      peakHandler,
+      chunkStartedHandler,
       ...rest
     } = options;
+    this.peakHandler = typeof peakHandler === 'function' ? peakHandler : null;
+    this.chunkStartedHandler = typeof chunkStartedHandler === 'function' ? chunkStartedHandler : null;
     this.options = {
       ...WHISPER_AUDIO_FORMAT,
       ...rest,
@@ -313,9 +319,22 @@ class AudioRecorder {
       ? Math.floor(transcribeRetries)
       : 1;
     this.transcribeQueue = null;
+    // Whisper-server promise: resolves to a live WhisperServer instance, or null
+    // if the binary wasn't found / failed to start. Only started when transcription
+    // is enabled and no custom transcribeFn was injected (injected fns are for tests).
+    this._whisperServerPromise = null;
     if (this.transcribe) {
+      // Effective transcribe function: try the persistent server first (model
+      // already loaded), fall back to spawning a fresh whisper-cli if the server
+      // isn't available or hasn't started yet.
+      const effectiveTranscribeFn = transcribeFn || ((opts) => this._serverAwareTranscribe(opts));
+      if (!transcribeFn && useWhisperServer !== false) {
+        // Fire-and-forget server startup. Errors are caught and reported as a
+        // warn so recording is never blocked by a server startup failure.
+        this._whisperServerPromise = this._startWhisperServerSilently();
+      }
       const runFn = (job) => runWithMarkdown(job, {
-        transcribeFn,
+        transcribeFn: effectiveTranscribeFn,
         maxRetries: this.transcribeRetries,
       });
       const logger = transcribeLogger || {
@@ -364,6 +383,44 @@ class AudioRecorder {
     }
   }
 
+  // Probe for whisper-server, start it if found, log the outcome.
+  // Always resolves (never rejects) — errors are surfaced as console.warn
+  // and the session continues with per-chunk CLI fallback.
+  _startWhisperServerSilently() {
+    const { WhisperServer } = require('./whisperServer');
+    const os = require('os');
+    const binary = WhisperServer.probe();
+    if (!binary) {
+      trace('whisperServer', 'binary not found on PATH; using per-chunk whisper-cli');
+      return Promise.resolve(null);
+    }
+    const server = new WhisperServer();
+    const threads = this.transcribeThreads || Math.min(os.cpus().length, 8);
+    return server.start({ binary, model: this.transcribeModel, threads })
+      .then(() => {
+        console.log(`[whisper-server] ready — model cached, per-chunk load overhead eliminated`);
+        return server;
+      })
+      .catch((err) => {
+        console.warn(`[whisper-server] startup failed (${err.message}); falling back to per-chunk CLI`);
+        return null;
+      });
+  }
+
+  // Transcription function used when a persistent whisper-server is available.
+  // Falls back to the standard whisper-cli spawn if the server is not ready.
+  async _serverAwareTranscribe({ wav, model, language, threads, noSpeechThreshold, entropyThreshold }) {
+    if (this._whisperServerPromise) {
+      const server = await this._whisperServerPromise;
+      if (server && server.ready) {
+        trace('whisperServer', 'using server for chunk', { wav: path.basename(wav) });
+        return server.transcribeToFile(wav, { language, noSpeechThreshold, entropyThreshold });
+      }
+    }
+    trace('whisperServer', 'falling back to CLI for chunk', { wav: path.basename(wav) });
+    return transcribeFile({ wav, model, language, threads, noSpeechThreshold, entropyThreshold });
+  }
+
   // Wait for any in-flight or queued transcriptions to settle. Safe to call
   // when transcription is off (returns a resolved promise). The CLI shutdown
   // path awaits this before process.exit so we don't kill whisper-cli mid-job.
@@ -373,8 +430,15 @@ class AudioRecorder {
       return Promise.resolve();
     }
     trace('transcribe', 'drainTranscriptions: waiting', { pending: this.transcribeQueue.length });
-    return this.transcribeQueue.drain().then(() => {
+    return this.transcribeQueue.drain().then(async () => {
       trace('transcribe', 'drainTranscriptions: queue empty');
+      if (this._whisperServerPromise) {
+        const server = await this._whisperServerPromise.catch(() => null);
+        if (server) {
+          server.stop();
+          trace('whisperServer', 'stopped after drain');
+        }
+      }
     });
   }
 
@@ -390,12 +454,15 @@ class AudioRecorder {
   _attachFinalize(fileStream, filePath, sidecar = null) {
     if (!fileStream || typeof fileStream.once !== 'function') return;
     if (typeof filePath !== 'string') return;
+    // Async IIFE inside 'close': keeps the event loop free during the
+    // stat + WAV-header-patch + sidecar-write sequence (Sprint M2).
     fileStream.once('close', () => {
+      (async () => {
       const closedAt = new Date();
       trace('finalize', 'WriteStream closed', { file: path.relative(process.cwd(), filePath), hasSidecar: !!(sidecar && sidecar.peakAcc && sidecar.format) });
       let size = -1;
       try {
-        size = fs.statSync(filePath).size;
+        size = (await fs.promises.stat(filePath)).size;
       } catch (err) {
         trace('finalize', 'stat failed after close; skipping transcription path', { filePath, err: err.message });
         return;
@@ -403,13 +470,13 @@ class AudioRecorder {
       if (size === 0) {
         console.warn(`Skipping empty chunk (sox crash?): ${path.basename(filePath)}`);
         trace('finalize', 'zero-byte WAV removed; no transcription', { filePath });
-        try { fs.unlinkSync(filePath); } catch (_) { /* leave it */ }
+        try { await fs.promises.unlink(filePath); } catch (_) { /* leave it */ }
         return;
       }
       let finalizeResult = null;
       if (/\.wav$/i.test(filePath)) {
         try {
-          finalizeResult = finalizeWavHeader(filePath);
+          finalizeResult = await finalizeWavHeaderAsync(filePath);
         } catch (err) {
           console.warn(`WAV header finalize skipped for ${filePath}: ${err.message}`);
         }
@@ -427,7 +494,10 @@ class AudioRecorder {
             peak: sidecar.peakAcc.peak,
             peakDb: sidecar.peakAcc.peakDb,
           });
-          writeSidecar(filePath, sidecarPayload);
+          await fs.promises.writeFile(
+            sidecarPathFor(filePath),
+            `${JSON.stringify(sidecarPayload, null, 2)}\n`,
+          );
         } catch (err) {
           console.warn(`Sidecar write skipped for ${filePath}: ${err.message}`);
         }
@@ -502,6 +572,31 @@ class AudioRecorder {
           file: path.basename(filePath),
         });
       }
+      })().catch((err) => {
+        // Unhandled async errors in the finalize IIFE: log but never crash.
+        console.warn(`[finalize error] ${path.basename(filePath)}: ${err.message}`);
+        trace('finalize', 'async IIFE error', { filePath, err: err.message });
+      });
+    });
+  }
+
+  // Attach a throttled peak emitter to a recording stream so callers can drive
+  // a live meter without polling. Emits (peak, db) at ~80 ms intervals.
+  // Safe to call when peakHandler is null — becomes a no-op.
+  _wirePeakEmitter(stream) {
+    if (!this.peakHandler) return;
+    const handler = this.peakHandler;
+    let windowPeak = 0;
+    let lastEmit = 0;
+    stream.on('data', (chunk) => {
+      const p = peak16LE(chunk);
+      if (p > windowPeak) windowPeak = p;
+      const now = Date.now();
+      if (now - lastEmit >= 80) {
+        handler(windowPeak, toDb(windowPeak));
+        windowPeak = 0;
+        lastEmit = now;
+      }
     });
   }
 
@@ -525,6 +620,7 @@ class AudioRecorder {
     const stream = this.recording.stream();
     if (peakAcc) stream.on('data', (chunk) => peakAcc.push(chunk));
     stream.pipe(this.fileStream);
+    this._wirePeakEmitter(stream);
     stream.on('error', (err) => {
       // Intentional stop() nulls this.recording before sox's error fires.
       if (!this.recording) return;
@@ -551,6 +647,7 @@ class AudioRecorder {
     this.recording = recorder.record({ ...this.options, audioType: 'raw' });
     const stream = this.recording.stream();
     stream.on('data', handler);
+    this._wirePeakEmitter(stream);
     stream.on('error', (err) => {
       // After stop() runs, this.recording is null -- treat that as an
       // intentional shutdown and stay quiet; sox's exit on kill is not news.
@@ -633,6 +730,7 @@ class AudioRecorder {
 
       stream.on('data', (chunk) => peakAcc.push(chunk));
       stream.pipe(this.fileStream);
+      this._wirePeakEmitter(stream);
       stream.on('error', (err) => {
         // If stop() cleared this.recording, the error came from an intentional
         // kill -- stay quiet and let the shutdown path do its thing.
@@ -670,6 +768,7 @@ class AudioRecorder {
         }
       });
 
+      if (this.chunkStartedHandler) this.chunkStartedHandler(chunkPath);
       console.log(`Idle chunk started: ${path.basename(chunkPath)}`);
     };
 
