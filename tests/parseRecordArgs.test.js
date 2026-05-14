@@ -16,6 +16,8 @@ function expectShape(overrides = {}) {
     transcribeMinPeak: null,
     transcribeQueueMax: null,
     transcribeThreads: null,
+    noSpeechThreshold: null,
+    entropyThreshold: null,
     trace: false,
     ...overrides,
   };

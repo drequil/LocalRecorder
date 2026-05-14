@@ -8,6 +8,8 @@ function expectShape(overrides = {}) {
     multilingual: false,
     transcribeModelPreset: null,
     transcribeThreads: null,
+    noSpeechThreshold: null,
+    entropyThreshold: null,
     json: false,
     ...overrides,
   };

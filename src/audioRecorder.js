@@ -2,6 +2,7 @@ require('./recorderPatch'); // must come before node-record-lpcm16 is loaded
 const recorder = require('node-record-lpcm16');
 const fs = require('fs');
 const path = require('path');
+const { filterHallucinations } = require('./hallucination');
 const { finalizeWavHeader } = require('./wavHeaderFix');
 const { PeakAccumulator } = require('./peakAccumulator');
 const { buildSidecar, writeSidecar, sidecarPathFor } = require('./chunkSidecar');
@@ -38,22 +39,44 @@ function defaultChunkFilename(now = new Date(), suffix = '') {
 // filename convention the installed whisper-cli picked), and return the result.
 // Extracted so the constructor can fall back to it when the caller doesn't
 // inject a custom transcribeFn.
-async function defaultTranscribeRun({ wav, model, language, threads }, { transcribeFn = transcribeFile, fsImpl = fs } = {}) {
-  const result = await transcribeFn({ wav, model, language, threads });
+async function defaultTranscribeRun({ wav, model, language, threads, noSpeechThreshold, entropyThreshold }, { transcribeFn = transcribeFile, fsImpl = fs } = {}) {
+  const result = await transcribeFn({ wav, model, language, threads, noSpeechThreshold, entropyThreshold });
+
+  // Apply hallucination filter.  If whisper.cpp produced text, strip any lines
+  // that match known hallucination patterns (e.g. repeated "Thank you.").
+  // When ALL lines were hallucinated, replace the .txt with an empty file so
+  // consumers see a clean gap rather than fake content.
+  let filteredText = result ? (result.text || '') : '';
+  let hallucinationFiltered = false;
+  if (filteredText.trim().length > 0) {
+    const fr = filterHallucinations(filteredText);
+    if (fr.removedCount > 0) {
+      filteredText = fr.text;
+      hallucinationFiltered = true;
+      trace('hallucination', 'filtered', {
+        wav: path.basename(wav),
+        removedCount: fr.removedCount,
+        totalLines: fr.totalLines,
+        allRemoved: fr.allRemoved,
+      });
+    }
+  }
+
   const ext = path.extname(wav);
   const stem = path.basename(wav, ext);
   const canonical = path.join(path.dirname(wav), `${stem}.txt`);
-  if (result && result.txtPath && result.txtPath !== canonical) {
+  const needsWrite = hallucinationFiltered || (result && result.txtPath && result.txtPath !== canonical);
+  if (needsWrite) {
     try {
-      fsImpl.writeFileSync(canonical, `${(result.text || '').trim()}\n`);
-      try { fsImpl.unlinkSync(result.txtPath); } catch (_) { /* best-effort cleanup */ }
+      fsImpl.writeFileSync(canonical, filteredText.length > 0 ? `${filteredText.trim()}\n` : '');
+      if (result && result.txtPath && result.txtPath !== canonical) {
+        try { fsImpl.unlinkSync(result.txtPath); } catch (_) { /* best-effort cleanup */ }
+      }
     } catch (err) {
-      // If we can't write the canonical .txt, surface the original whisper output
-      // location to the caller via the returned result so logs are still useful.
-      return { ...result, normalizeError: err.message };
+      return { ...result, text: filteredText, normalizeError: err.message };
     }
   }
-  return { ...result, txtPath: canonical };
+  return { ...result, text: filteredText, txtPath: canonical };
 }
 
 // T-4: Write a <basename>.md sibling next to the WAV combining sidecar
@@ -216,9 +239,11 @@ class AudioRecorder {
       transcribeModel = DEFAULT_MODEL_PATH,
       transcribeLanguage = null,
       transcribeThreads = null,
+      noSpeechThreshold = null,
+      entropyThreshold = null,
       transcribeFn,
       transcribeLogger = null,
-      transcribeMinPeak = 0.005,
+      transcribeMinPeak = 0.02,
       transcribeQueueMax = 5,
       transcribeRetries = 1,
       ...rest
@@ -257,18 +282,25 @@ class AudioRecorder {
       Number.isInteger(transcribeThreads) && transcribeThreads > 0
         ? transcribeThreads
         : null;
+    this.noSpeechThreshold =
+      Number.isFinite(noSpeechThreshold) && noSpeechThreshold >= 0
+        ? noSpeechThreshold
+        : null;
+    this.entropyThreshold =
+      Number.isFinite(entropyThreshold) && entropyThreshold >= 0
+        ? entropyThreshold
+        : null;
     this.transcribeLanguage =
       transcribeLanguage != null && String(transcribeLanguage).trim() !== ''
         ? String(transcribeLanguage).trim()
         : null;
     // T-5: peak gating threshold. Chunks whose sidecar peak < this are
     // marked 'skipped' with a stub .md and never enter the transcription
-    // queue. Default 0.005 (~-46 dBFS) is well above typical room hum but
-    // below conversational speech. Set to 0 to disable the gate (every
-    // chunk goes to whisper).
+    // queue. Default 0.02 (~-34 dBFS) is above typical room hum/HVAC but
+    // well below conversational speech. Set to 0 to disable the gate.
     this.transcribeMinPeak = Number.isFinite(transcribeMinPeak) && transcribeMinPeak >= 0
       ? transcribeMinPeak
-      : 0.005;
+      : 0.02;
     // T-5: backpressure threshold. When queue length exceeds this, fire a
     // one-shot warn (re-armed when the queue drains). Default 5; set to 0
     // to disable the warning.
@@ -407,7 +439,7 @@ class AudioRecorder {
       // .json sibling already being on disk.
       //
       // T-5: peak gating. If the sidecar says the chunk's peak is below
-      // `transcribeMinPeak` (default 0.005), skip the queue entirely and
+      // `transcribeMinPeak` (default 0.02), skip the queue entirely and
       // write a `_skipped: ..._` .md stub immediately. Saves whisper.cpp
       // CPU on dead-air chunks and gives the user explicit visibility into
       // why a particular chunk's .txt is missing.
@@ -461,6 +493,8 @@ class AudioRecorder {
             model: this.transcribeModel,
             language: this.transcribeLanguage,
             threads: this.transcribeThreads,
+            noSpeechThreshold: this.noSpeechThreshold,
+            entropyThreshold: this.entropyThreshold,
           });
         }
       } else {

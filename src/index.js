@@ -162,9 +162,24 @@ function resolveIdleChunkKnobs(parsed) {
 // on a 24-core machine.
 const WHISPER_MAX_AUTO_THREADS = 8;
 
+// Hallucination suppression defaults (both are more conservative than whisper's
+// built-in defaults of 0.6 / 2.4).
+const WHISPER_NO_SPEECH_DEFAULT = 0.8;
+const WHISPER_ENTROPY_DEFAULT = 2.8;
+
 function resolveTranscribeThreads(cliValue) {
   if (cliValue != null && Number.isInteger(cliValue) && cliValue > 0) return cliValue;
   return Math.min(os.cpus().length, WHISPER_MAX_AUTO_THREADS);
+}
+
+function resolveNoSpeechThreshold(cliValue) {
+  if (cliValue != null && Number.isFinite(cliValue) && cliValue >= 0) return cliValue;
+  return WHISPER_NO_SPEECH_DEFAULT;
+}
+
+function resolveEntropyThreshold(cliValue) {
+  if (cliValue != null && Number.isFinite(cliValue) && cliValue >= 0) return cliValue;
+  return WHISPER_ENTROPY_DEFAULT;
 }
 
 const RECORD_FLAGS = {
@@ -183,6 +198,8 @@ const RECORD_FLAGS = {
   '--transcribe-min-peak': { type: 'percent', as: 'transcribeMinPeak' },
   '--transcribe-queue-max': { type: 'positiveNumber', as: 'transcribeQueueMax' },
   '--transcribe-threads': { type: 'positiveNumber', as: 'transcribeThreads' },
+  '--no-speech-thold': { type: 'positiveNumber', as: 'noSpeechThreshold' },
+  '--entropy-thold': { type: 'positiveNumber', as: 'entropyThreshold' },
   '--trace': { type: 'flag', as: 'trace' },
 };
 
@@ -210,6 +227,8 @@ const IDLE_FLAGS = {
   // T-5: queue backlog warning threshold. 0 disables.
   '--transcribe-queue-max': { type: 'positiveNumber', as: 'transcribeQueueMax' },
   '--transcribe-threads': { type: 'positiveNumber', as: 'transcribeThreads' },
+  '--no-speech-thold': { type: 'positiveNumber', as: 'noSpeechThreshold' },
+  '--entropy-thold': { type: 'positiveNumber', as: 'entropyThreshold' },
   '--trace': { type: 'flag', as: 'trace' },
 };
 
@@ -224,6 +243,8 @@ const TRANSCRIBE_FLAGS = {
   '--medium': { type: 'flag', as: 'medium' },
   '--large': { type: 'flag', as: 'large' },
   '--threads': { type: 'positiveNumber', as: 'transcribeThreads' },
+  '--no-speech-thold': { type: 'positiveNumber', as: 'noSpeechThreshold' },
+  '--entropy-thold': { type: 'positiveNumber', as: 'entropyThreshold' },
   '--json': { type: 'flag', as: 'json' },
 };
 
@@ -281,6 +302,8 @@ function printHelp() {
   console.log('  --transcribe-min-peak P Skip chunks whose sidecar peak < P (default 0.005 / ~-46 dBFS); 0 disables');
   console.log('  --transcribe-queue-max N  Warn when transcription queue depth > N (default 5); 0 disables');
   console.log('  --transcribe-threads N  CPU threads passed to whisper.cpp -t (default: min(cpus, 8))');
+  console.log('  --no-speech-thold P     Drop segments whisper rates as non-speech above P (default 0.8; whisper default 0.6)');
+  console.log('  --entropy-thold P       Drop uncertain segments above entropy P (default 2.8; whisper default 2.4)');
   console.log('  --trace                 Verbose stderr traces (also LOCALRECORDER_TRACE=1)');
   console.log('  --json                  Emit transcribe result as JSON instead of plain text');
 }
@@ -312,6 +335,8 @@ function parseRecordArgs(args) {
     transcribeMinPeak: flags.transcribeMinPeak != null ? flags.transcribeMinPeak : null,
     transcribeQueueMax: flags.transcribeQueueMax != null ? flags.transcribeQueueMax : null,
     transcribeThreads: flags.transcribeThreads != null ? flags.transcribeThreads : null,
+    noSpeechThreshold: flags.noSpeechThreshold != null ? flags.noSpeechThreshold : null,
+    entropyThreshold: flags.entropyThreshold != null ? flags.entropyThreshold : null,
     trace: flags.trace === true,
   };
 }
@@ -342,6 +367,8 @@ function parseIdleArgs(args) {
     transcribeMinPeak: flags.transcribeMinPeak != null ? flags.transcribeMinPeak : null,
     transcribeQueueMax: flags.transcribeQueueMax != null ? flags.transcribeQueueMax : null,
     transcribeThreads: flags.transcribeThreads != null ? flags.transcribeThreads : null,
+    noSpeechThreshold: flags.noSpeechThreshold != null ? flags.noSpeechThreshold : null,
+    entropyThreshold: flags.entropyThreshold != null ? flags.entropyThreshold : null,
     trace: flags.trace === true,
   };
 }
@@ -371,6 +398,8 @@ function parseTranscribeArgs(args) {
     multilingual: flags.multilingual === true,
     transcribeModelPreset: pr.transcribeModelPreset,
     transcribeThreads: flags.transcribeThreads != null ? flags.transcribeThreads : null,
+    noSpeechThreshold: flags.noSpeechThreshold != null ? flags.noSpeechThreshold : null,
+    entropyThreshold: flags.entropyThreshold != null ? flags.entropyThreshold : null,
     json: flags.json === true,
   };
 }
@@ -500,11 +529,13 @@ async function runTranscribe(args = []) {
     }
   }
   const threads = resolveTranscribeThreads(parsed.transcribeThreads);
-  trace('transcribe-cli', 'one-shot transcribe', { wav: parsed.wav, model, language: language || null, threads });
+  const noSpeechThreshold = resolveNoSpeechThreshold(parsed.noSpeechThreshold);
+  const entropyThreshold = resolveEntropyThreshold(parsed.entropyThreshold);
+  trace('transcribe-cli', 'one-shot transcribe', { wav: parsed.wav, model, language: language || null, threads, noSpeechThreshold, entropyThreshold });
 
   let result;
   try {
-    result = await transcribeFile({ wav: parsed.wav, model, language, threads });
+    result = await transcribeFile({ wav: parsed.wav, model, language, threads, noSpeechThreshold, entropyThreshold });
   } catch (err) {
     console.error(`Error: ${err.message}`);
     if (err.stderr) {
@@ -655,6 +686,8 @@ async function main(argv) {
       transcribeMinPeak: parsed.transcribeMinPeak,
       transcribeQueueMax: parsed.transcribeQueueMax,
       transcribeThreads: resolveTranscribeThreads(parsed.transcribeThreads),
+      noSpeechThreshold: resolveNoSpeechThreshold(parsed.noSpeechThreshold),
+      entropyThreshold: resolveEntropyThreshold(parsed.entropyThreshold),
     });
   } else {
     let parsed = parseIdleArgs(tail);
@@ -713,6 +746,8 @@ async function main(argv) {
       transcribeMinPeak: parsed.transcribeMinPeak,
       transcribeQueueMax: parsed.transcribeQueueMax,
       transcribeThreads: resolveTranscribeThreads(parsed.transcribeThreads),
+      noSpeechThreshold: resolveNoSpeechThreshold(parsed.noSpeechThreshold),
+      entropyThreshold: resolveEntropyThreshold(parsed.entropyThreshold),
     });
   }
 
@@ -836,7 +871,11 @@ module.exports = {
   applyRecordAutoTranscribe,
   resolveIdleChunkKnobs,
   resolveTranscribeThreads,
+  resolveNoSpeechThreshold,
+  resolveEntropyThreshold,
   WHISPER_MAX_AUTO_THREADS,
+  WHISPER_NO_SPEECH_DEFAULT,
+  WHISPER_ENTROPY_DEFAULT,
   trace,
   enableTraceFromCli,
 };

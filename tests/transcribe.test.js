@@ -148,6 +148,21 @@ describe('buildWhisperArgs', () => {
     expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', threads: 2.5 })).toEqual(base);
   });
 
+  test('inserts --no-speech-thold and --entropy-thold after -t when both are set', () => {
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', threads: 8, noSpeechThreshold: 0.8, entropyThreshold: 2.8 }))
+      .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '-t', '8', '--no-speech-thold', '0.8', '--entropy-thold', '2.8', '-f', 'a.wav']);
+  });
+
+  test('inserts --no-speech-thold alone when only that is set', () => {
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', noSpeechThreshold: 0.9 }))
+      .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '--no-speech-thold', '0.9', '-f', 'a.wav']);
+  });
+
+  test('omits hallucination flags when null', () => {
+    const base = ['--no-prints', '--output-txt', '-m', 'm.bin', '-f', 'a.wav'];
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', noSpeechThreshold: null, entropyThreshold: null })).toEqual(base);
+  });
+
   test('throws on missing model', () => {
     expect(() => buildWhisperArgs({ wav: 'a.wav' })).toThrow(/model is required/);
   });

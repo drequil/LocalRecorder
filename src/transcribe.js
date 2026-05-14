@@ -69,19 +69,30 @@ function isWavFile(filePath) {
 
 // Pure: shape the argv we will hand to spawn. Kept separate so tests can pin the exact
 // flag order without exercising spawn.
-function buildWhisperArgs({ model, wav, language = null, threads = null }) {
+function buildWhisperArgs({
+  model, wav, language = null, threads = null,
+  noSpeechThreshold = null, entropyThreshold = null,
+}) {
   if (!model) throw new TypeError('buildWhisperArgs: model is required');
   if (!wav) throw new TypeError('buildWhisperArgs: wav is required');
   // --no-prints: suppress whisper-cli's progress chatter so stdout is clean.
   // --output-txt: emit the .txt sibling we will read after exit.
-  // -l: whisper.cpp source language (ISO 639-1, e.g. hi, zh, en). Omitted when unset so
-  //     whisper auto-detects (good for mixed audio). For CJK, callers often pass -l zh.
-  // -t N: CPU thread count. whisper.cpp defaults to 4; passing the logical
-  //       CPU count (capped at a practical limit) substantially cuts wall-clock
-  //       time on multi-core machines.
+  // -t N: CPU thread count (default min(cpus,8); see resolveTranscribeThreads).
+  // --no-speech-thold: probability above which a segment is classified as
+  //   silence and dropped. Whisper default 0.6 is too permissive; we raise it
+  //   to 0.8 to suppress "Thank you"/"[Music]" hallucinations on quiet chunks.
+  // --entropy-thold: segments with token-level entropy above this are discarded
+  //   as uncertain. Whisper default 2.4; we raise to 2.8.
+  // -l: whisper.cpp source language (ISO 639-1). Omitted → auto-detect.
   const args = ['--no-prints', '--output-txt', '-m', model];
   if (threads != null && Number.isInteger(threads) && threads > 0) {
     args.push('-t', String(threads));
+  }
+  if (noSpeechThreshold != null && Number.isFinite(noSpeechThreshold)) {
+    args.push('--no-speech-thold', String(noSpeechThreshold));
+  }
+  if (entropyThreshold != null && Number.isFinite(entropyThreshold)) {
+    args.push('--entropy-thold', String(entropyThreshold));
   }
   if (language != null && String(language).trim() !== '') {
     args.push('-l', String(language).trim());
@@ -121,6 +132,8 @@ async function transcribeFile({
   model = DEFAULT_MODEL_PATH,
   language = null,
   threads = null,
+  noSpeechThreshold = null,
+  entropyThreshold = null,
   binary = null,
   spawnFn = spawn,
   resolveBinaryFn = resolveBinary,
@@ -152,7 +165,7 @@ async function transcribeFile({
     );
   }
 
-  const args = buildWhisperArgs({ model, wav, language, threads });
+  const args = buildWhisperArgs({ model, wav, language, threads, noSpeechThreshold, entropyThreshold });
   trace('whisper', 'spawn', { binary: resolvedBinary, args, wav, model, language: language || null });
   const startedAt = Date.now();
 
