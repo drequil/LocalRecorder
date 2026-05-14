@@ -138,7 +138,9 @@ describe('ensureDefaultUserConfigIfMissing', () => {
     expect(log).toHaveBeenCalled();
     const cfgPath = path.join(homedir, '.localrecorder', 'config.json');
     const data = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-    expect(data.transcribeModel).toBe('models/ggml-base.en.bin');
+    // transcribeModel is intentionally omitted so the runtime probe selects
+    // the best available model rather than hardcoding ggml-base.en.bin.
+    expect(data.transcribeModel).toBeUndefined();
     expect(data.transcribeLanguage).toBe('en');
   });
 
@@ -322,6 +324,32 @@ describe('mergeTranscribeFieldsFromUserConfig', () => {
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
+  });
+
+  test('no model set: probes filesystem and returns best available', async () => {
+    const cwd = 'D:/proj';
+    const fsImpl = {
+      existsSync: (p) => p.includes('ggml-large-v3.bin'),
+    };
+    const out = await mergeTranscribeFieldsFromUserConfig(
+      { transcribeModel: null, transcribeLanguage: null, multilingual: false, transcribeModelPreset: null },
+      { transcribeModel: null, transcribeLanguage: null, configPath: null, recordingsRoot: null },
+      { cwd, fsImpl },
+    );
+    expect(out.transcribeModel).toBe(path.normalize(path.resolve(cwd, 'models', 'ggml-large-v3.bin')));
+  });
+
+  test('no model set, only base.en on disk: falls back to base.en', async () => {
+    const cwd = 'D:/proj';
+    const fsImpl = {
+      existsSync: (p) => p.includes('ggml-base.en.bin'),
+    };
+    const out = await mergeTranscribeFieldsFromUserConfig(
+      { transcribeModel: null, transcribeLanguage: null, multilingual: false, transcribeModelPreset: null },
+      { transcribeModel: null, transcribeLanguage: null, configPath: null, recordingsRoot: null },
+      { cwd, fsImpl },
+    );
+    expect(out.transcribeModel).toBe(path.normalize(path.resolve(cwd, 'models', 'ggml-base.en.bin')));
   });
 
   test('--multilingual treats CLI --language auto as omit whisper -l', async () => {

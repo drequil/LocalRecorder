@@ -13,7 +13,7 @@ const {
 } = require('./userConfig');
 const { downloadGgmlBaseBinIfMissing } = require('./downloadGgmlBaseBin');
 const { resolveMultilingualModel } = require('./resolveMultilingualModel');
-const { parsePresetFlags, resolvePresetModelAbs } = require('./whisperModelPreset');
+const { parsePresetFlags, resolvePresetModelAbs, resolveBestAvailableModel } = require('./whisperModelPreset');
 const {
   DEFAULT_MODEL_PATH,
   transcribeFile,
@@ -472,7 +472,7 @@ async function runTranscribe(args = []) {
     } else if (parsed.transcribeModelPreset === 'medium' || parsed.transcribeModelPreset === 'large') {
       modelRaw = resolvePresetModelAbs(process.cwd(), parsed.transcribeModelPreset);
     } else {
-      modelRaw = userCfg.transcribeModel || DEFAULT_MODEL_PATH;
+      modelRaw = userCfg.transcribeModel || resolveBestAvailableModel(process.cwd());
     }
     model = path.isAbsolute(modelRaw) ? path.normalize(modelRaw) : path.resolve(process.cwd(), modelRaw);
     if (parsed.language != null && String(parsed.language).trim() !== '') {

@@ -16,7 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { resolveMultilingualModel } = require('./resolveMultilingualModel');
-const { resolvePresetModelAbs } = require('./whisperModelPreset');
+const { resolvePresetModelAbs, resolveBestAvailableModel } = require('./whisperModelPreset');
 
 const CONFIG_DIR_NAME = '.localrecorder';
 const CONFIG_FILE_NAME = 'config.json';
@@ -115,8 +115,8 @@ function loadUserConfig({
   return { recordingsRoot: null, transcribeModel: null, transcribeLanguage: null, configPath: null };
 }
 
+// No transcribeModel written — at runtime we probe for the best available model.
 const DEFAULT_CONFIG_OBJECT = {
-  transcribeModel: 'models/ggml-base.en.bin',
   transcribeLanguage: 'en',
 };
 
@@ -182,7 +182,10 @@ async function mergeTranscribeFieldsFromUserConfig(parsed, userCfg = loadUserCon
   } else if (parsed.transcribeModelPreset === 'medium' || parsed.transcribeModelPreset === 'large') {
     mergedModel = resolvePresetModelAbs(cwd, parsed.transcribeModelPreset);
   } else {
-    mergedModel = userCfg.transcribeModel || null;
+    // No CLI model and no preset: prefer an explicitly configured model, then
+    // auto-pick the best model that is already on disk (large-v3 → medium →
+    // base.en → base).
+    mergedModel = userCfg.transcribeModel || resolveBestAvailableModel(cwd, fsImpl);
   }
   let transcribeLanguage = null;
   if (parsed.transcribeLanguage != null && String(parsed.transcribeLanguage).trim() !== '') {

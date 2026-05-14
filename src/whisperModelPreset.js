@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 
 const HF_WHISPER_CPP_MODELS = 'https://huggingface.co/ggerganov/whisper.cpp/tree/main';
@@ -19,6 +20,27 @@ function resolvePresetModelAbs(cwd, preset) {
   return path.normalize(path.resolve(cwd, 'models', TRANSCRIBE_MODEL_PRESET_FILES[preset]));
 }
 
+/**
+ * Probe ./models/ in quality order and return the absolute path of the best
+ * model that is already on disk.  Falls back to ggml-base.en.bin (the
+ * conventional whisper.cpp default) if nothing is found, so callers can still
+ * surface a "model not found" error rather than crashing here.
+ */
+const MODEL_PROBE_ORDER = [
+  'ggml-large-v3.bin',
+  'ggml-medium.bin',
+  'ggml-base.en.bin',
+  'ggml-base.bin',
+];
+
+function resolveBestAvailableModel(cwd = process.cwd(), fsImpl = fs) {
+  for (const basename of MODEL_PROBE_ORDER) {
+    const abs = path.resolve(cwd, 'models', basename);
+    if (fsImpl.existsSync(abs)) return abs;
+  }
+  return path.resolve(cwd, 'models', 'ggml-base.en.bin');
+}
+
 /** Mutually exclusive --medium / --large → { transcribeModelPreset } or { error }. */
 function parsePresetFlags(flags) {
   if (flags.medium === true && flags.large === true) {
@@ -31,7 +53,9 @@ function parsePresetFlags(flags) {
 module.exports = {
   HF_WHISPER_CPP_MODELS,
   TRANSCRIBE_MODEL_PRESET_FILES,
+  MODEL_PROBE_ORDER,
   defaultMultilingualBasename,
   resolvePresetModelAbs,
   parsePresetFlags,
+  resolveBestAvailableModel,
 };

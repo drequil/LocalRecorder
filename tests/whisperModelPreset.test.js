@@ -1,5 +1,5 @@
 const path = require('path');
-const { parsePresetFlags, resolvePresetModelAbs, defaultMultilingualBasename } = require('../src/whisperModelPreset');
+const { parsePresetFlags, resolvePresetModelAbs, defaultMultilingualBasename, resolveBestAvailableModel, MODEL_PROBE_ORDER } = require('../src/whisperModelPreset');
 
 describe('parsePresetFlags', () => {
   test('returns null preset when neither flag', () => {
@@ -33,5 +33,49 @@ describe('defaultMultilingualBasename', () => {
   test('base fallback', () => {
     expect(defaultMultilingualBasename(null)).toBe('ggml-base.bin');
     expect(defaultMultilingualBasename(undefined)).toBe('ggml-base.bin');
+  });
+});
+
+describe('resolveBestAvailableModel', () => {
+  const cwd = 'D:/proj';
+
+  function makeFsImpl(...existingBasenames) {
+    const existing = new Set(
+      existingBasenames.map((b) => path.normalize(path.resolve(cwd, 'models', b))),
+    );
+    return { existsSync: (p) => existing.has(path.normalize(p)) };
+  }
+
+  test('MODEL_PROBE_ORDER starts with large-v3 and ends with base.en', () => {
+    expect(MODEL_PROBE_ORDER[0]).toBe('ggml-large-v3.bin');
+    expect(MODEL_PROBE_ORDER).toContain('ggml-base.en.bin');
+  });
+
+  test('returns large-v3 when it exists', () => {
+    const fsImpl = makeFsImpl('ggml-large-v3.bin', 'ggml-medium.bin', 'ggml-base.en.bin');
+    expect(resolveBestAvailableModel(cwd, fsImpl)).toBe(
+      path.normalize(path.resolve(cwd, 'models', 'ggml-large-v3.bin')),
+    );
+  });
+
+  test('skips large-v3 and returns medium when only medium exists', () => {
+    const fsImpl = makeFsImpl('ggml-medium.bin');
+    expect(resolveBestAvailableModel(cwd, fsImpl)).toBe(
+      path.normalize(path.resolve(cwd, 'models', 'ggml-medium.bin')),
+    );
+  });
+
+  test('returns base.en when only base.en exists', () => {
+    const fsImpl = makeFsImpl('ggml-base.en.bin');
+    expect(resolveBestAvailableModel(cwd, fsImpl)).toBe(
+      path.normalize(path.resolve(cwd, 'models', 'ggml-base.en.bin')),
+    );
+  });
+
+  test('falls back to base.en path when nothing exists', () => {
+    const fsImpl = makeFsImpl();
+    expect(resolveBestAvailableModel(cwd, fsImpl)).toBe(
+      path.normalize(path.resolve(cwd, 'models', 'ggml-base.en.bin')),
+    );
   });
 });
