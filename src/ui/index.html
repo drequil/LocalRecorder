@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LocalRecorder</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #111113;
+  --surface: #1c1c1f;
+  --surface2: #27272b;
+  --border: #2e2e33;
+  --text: #e8e8ea;
+  --text2: #8f8f96;
+  --text3: #55555c;
+  --accent: #3b82f6;
+  --accent-dim: #1d3557;
+  --red: #ef4444;
+  --red-dim: #3b0f0f;
+  --green: #22c55e;
+  --yellow: #eab308;
+  --orange: #f97316;
+  --radius: 6px;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mono: 'Cascadia Code', 'Consolas', monospace;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; line-height: 1.5; }
+
+/* ---- Layout ---- */
+#app { display: flex; height: 100vh; overflow: hidden; }
+
+#sidebar {
+  width: 280px;
+  min-width: 280px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---- Header ---- */
+#header {
+  height: 44px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 10px;
+  flex-shrink: 0;
+}
+#header h1 { font-size: 13px; font-weight: 600; letter-spacing: 0.05em; color: var(--text); }
+#status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text3); transition: background 0.3s; }
+#status-dot.idle    { background: var(--text3); }
+#status-dot.active  { background: var(--green); animation: pulse 1.2s ease-in-out infinite; }
+#status-dot.stopping { background: var(--yellow); }
+@keyframes pulse { 0%,100%{ opacity:1; } 50%{ opacity:0.4; } }
+#session-label { font-size: 11px; color: var(--text2); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
+
+/* ---- Sidebar sections ---- */
+.sidebar-section {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-section:last-child { border-bottom: none; }
+.section-label { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text3); margin-bottom: 8px; }
+
+/* ---- Mode pills ---- */
+#mode-row { display: flex; gap: 4px; }
+.mode-pill {
+  flex: 1;
+  padding: 5px 0;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text2);
+  background: transparent;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.mode-pill:hover { color: var(--text); border-color: #454549; }
+.mode-pill.active { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+
+/* ---- Form controls ---- */
+.field { margin-bottom: 8px; }
+.field:last-child { margin-bottom: 0; }
+.field label { display: block; font-size: 11px; color: var(--text2); margin-bottom: 4px; }
+.field select, .field input[type="text"], .field input[type="number"] {
+  width: 100%;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+  appearance: none;
+}
+.field select:focus, .field input:focus { border-color: var(--accent); }
+.field select option { background: var(--surface2); }
+
+.toggle-row { display: flex; align-items: center; justify-content: space-between; }
+.toggle-row span { font-size: 12px; color: var(--text2); }
+.toggle {
+  position: relative; width: 30px; height: 17px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+.toggle-track {
+  position: absolute; inset: 0; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: 999px;
+  transition: background 0.2s, border-color 0.2s;
+}
+.toggle input:checked ~ .toggle-track { background: var(--accent-dim); border-color: var(--accent); }
+.toggle-thumb {
+  position: absolute; top: 2px; left: 2px; width: 11px; height: 11px;
+  background: var(--text3); border-radius: 50%; transition: left 0.2s, background 0.2s;
+}
+.toggle input:checked ~ .toggle-thumb { left: 15px; background: var(--accent); }
+
+/* ---- Record button ---- */
+#record-btn {
+  width: 100%;
+  padding: 8px;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--accent);
+  color: #fff;
+  transition: background 0.15s, opacity 0.15s;
+}
+#record-btn:hover { opacity: 0.88; }
+#record-btn.recording { background: var(--red); }
+#record-btn.stopping  { background: var(--surface2); color: var(--text2); cursor: default; }
+
+/* ---- Peak meter ---- */
+#peak-section { flex-shrink: 0; }
+#meter-wrap { height: 14px; background: var(--surface2); border-radius: 3px; overflow: hidden; position: relative; }
+#meter-bar { height: 100%; width: 0%; background: var(--green); border-radius: 3px; transition: width 0.05s linear; }
+#meter-labels { display: flex; justify-content: space-between; margin-top: 3px; }
+#meter-db { font-size: 11px; font-family: var(--mono); color: var(--text2); }
+#meter-peak-hold { font-size: 11px; font-family: var(--mono); color: var(--text3); }
+
+/* ---- Stats strip ---- */
+#stats-row { display: flex; gap: 0; }
+.stat-cell { flex: 1; }
+.stat-cell + .stat-cell { border-left: 1px solid var(--border); padding-left: 10px; }
+.stat-value { font-size: 18px; font-weight: 600; font-family: var(--mono); color: var(--text); line-height: 1.2; }
+.stat-label { font-size: 10px; color: var(--text3); letter-spacing: 0.05em; text-transform: uppercase; }
+#stat-elapsed .stat-value { font-size: 16px; }
+
+/* ---- Queue badge ---- */
+#queue-badge { display: none; margin-top: 6px; padding: 4px 8px; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: var(--radius); font-size: 11px; color: var(--accent); }
+#queue-badge.visible { display: block; }
+
+/* ---- Main area ---- */
+#tab-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  padding: 0 16px;
+  gap: 0;
+  flex-shrink: 0;
+}
+.tab-btn {
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--text2);
+  cursor: pointer;
+  border: none;
+  background: none;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  font-family: var(--font);
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--text); border-bottom-color: var(--accent); }
+
+#tab-content { flex: 1; overflow: hidden; position: relative; }
+.tab-pane { position: absolute; inset: 0; overflow-y: auto; padding: 16px; display: none; }
+.tab-pane.active { display: block; }
+
+/* ---- Transcript feed ---- */
+#transcript-feed { display: flex; flex-direction: column; gap: 8px; }
+
+.chunk-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+.chunk-card.status-pending  { border-left: 3px solid var(--text3); }
+.chunk-card.status-ok       { border-left: 3px solid var(--green); }
+.chunk-card.status-failed   { border-left: 3px solid var(--red); }
+.chunk-card.status-skipped  { border-left: 3px solid var(--text3); opacity: 0.6; }
+
+.chunk-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.chunk-name { font-size: 11px; font-family: var(--mono); color: var(--text2); }
+.chunk-peak { font-size: 11px; color: var(--text3); font-family: var(--mono); }
+.chunk-status { margin-left: auto; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.chunk-status.pending  { color: var(--text3); }
+.chunk-status.ok       { color: var(--green); }
+.chunk-status.failed   { color: var(--red); }
+.chunk-status.skipped  { color: var(--text3); }
+
+.chunk-text { font-size: 13px; color: var(--text); line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.chunk-text.empty { color: var(--text3); font-style: italic; }
+
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 8px; color: var(--text3); }
+.empty-state p { font-size: 13px; }
+
+/* ---- Session browser ---- */
+#sessions-list { display: flex; flex-direction: column; gap: 6px; }
+
+.session-group { }
+.session-date { font-size: 11px; font-weight: 600; color: var(--text2); letter-spacing: 0.06em; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.session-items { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+
+.session-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.session-item:hover { border-color: #454549; }
+.session-item.active { border-color: var(--accent); background: var(--accent-dim); }
+.session-item-name { flex: 1; font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-item-count { font-size: 11px; color: var(--text3); font-family: var(--mono); }
+
+.session-detail { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.detail-chunk {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.detail-chunk-left { flex: 1; min-width: 0; }
+.detail-chunk-name { font-size: 11px; font-family: var(--mono); color: var(--text2); margin-bottom: 2px; }
+.detail-chunk-text { font-size: 12px; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+.detail-chunk-text.none { color: var(--text3); font-style: italic; }
+.detail-chunk-peak { font-size: 11px; color: var(--text3); font-family: var(--mono); white-space: nowrap; }
+
+/* ---- Scrollbar ---- */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #454549; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- SIDEBAR -->
+  <aside id="sidebar">
+
+    <div id="header" style="border-bottom: 1px solid var(--border);">
+      <span id="status-dot" class="idle"></span>
+      <h1>LocalRecorder</h1>
+      <span id="model-chip" title="" style="margin-left:auto;font-size:10px;font-family:var(--mono);color:var(--text3);background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:2px 6px;white-space:nowrap;display:none;"></span>
+    </div>
+
+    <!-- Mode -->
+    <div class="sidebar-section">
+      <div class="section-label">Mode</div>
+      <div id="mode-row">
+        <button class="mode-pill active" data-mode="chunk">Chunk</button>
+        <button class="mode-pill" data-mode="record">Record</button>
+        <button class="mode-pill" data-mode="listen">Listen</button>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div class="sidebar-section">
+      <div class="section-label">Settings</div>
+      <div class="field">
+        <label>Output directory</label>
+        <div style="display:flex;gap:4px;align-items:center;">
+          <input type="text" id="root-input" placeholder="default (./recordings)" style="flex:1;min-width:0;">
+          <button id="root-reset-btn" title="Reset to default" style="flex-shrink:0;padding:4px 7px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text2);cursor:pointer;font-size:11px;">↺</button>
+        </div>
+        <div id="root-hint" style="font-size:10px;color:var(--text3);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
+      </div>
+      <div class="field">
+        <label>Input device</label>
+        <select id="device-select"><option value="">Default</option></select>
+      </div>
+      <div class="field">
+        <label>Session name</label>
+        <input type="text" id="name-input" placeholder="optional label…">
+      </div>
+      <div class="field" id="chunk-fields">
+        <label>Max chunk (seconds)</label>
+        <input type="number" id="max-chunk-input" value="30" min="5" max="3600">
+      </div>
+      <div class="field toggle-row" id="transcribe-field">
+        <span>Transcribe</span>
+        <label class="toggle">
+          <input type="checkbox" id="transcribe-toggle" checked>
+          <span class="toggle-track"></span>
+          <span class="toggle-thumb"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Record button -->
+    <div class="sidebar-section">
+      <button id="record-btn">Start Recording</button>
+    </div>
+
+    <!-- Peak meter -->
+    <div class="sidebar-section" id="peak-section">
+      <div class="section-label">Level</div>
+      <div id="meter-wrap"><div id="meter-bar"></div></div>
+      <div id="meter-labels">
+        <span id="meter-db">— dBFS</span>
+        <span id="meter-peak-hold"></span>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="sidebar-section">
+      <div id="stats-row">
+        <div class="stat-cell" id="stat-elapsed">
+          <div class="stat-value" id="elapsed-value">--:--</div>
+          <div class="stat-label">Elapsed</div>
+        </div>
+        <div class="stat-cell" style="padding-left:14px;">
+          <div class="stat-value" id="chunks-value">0</div>
+          <div class="stat-label">Chunks</div>
+        </div>
+      </div>
+      <div id="queue-badge">0 transcribing</div>
+    </div>
+
+    <div style="flex:1;"></div>
+
+  </aside>
+
+  <!-- MAIN -->
+  <main id="main">
+
+    <div id="tab-bar">
+      <button class="tab-btn active" data-tab="live">Live Transcript</button>
+      <button class="tab-btn" data-tab="sessions">Sessions</button>
+    </div>
+
+    <div id="tab-content">
+
+      <!-- Live transcript tab -->
+      <div class="tab-pane active" id="tab-live">
+        <div id="transcript-feed">
+          <div class="empty-state" id="live-empty">
+            <p>Start recording to see transcripts here.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sessions browser tab -->
+      <div class="tab-pane" id="tab-sessions">
+        <div id="sessions-list">
+          <div class="empty-state" id="sessions-empty"><p>Loading sessions…</p></div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+</div>
+
+<script>
+// ---- WebSocket --------------------------------------------------------
+
+const ws = new WebSocket(`ws://${location.host}`);
+
+ws.addEventListener('message', (e) => {
+  let msg;
+  try { msg = JSON.parse(e.data); } catch { return; }
+  handleMessage(msg);
+});
+
+ws.addEventListener('close', () => {
+  setStatusDot('idle');
+});
+
+// ---- State ------------------------------------------------------------
+
+let appMode = 'chunk';  // current UI mode selection
+let isRecording = false;
+let isStopping = false;
+let elapsedMs = 0;
+let elapsedInterval = null;
+let chunkCount = 0;
+let queueDepth = 0;
+
+// Peak meter state
+let meterPeak = 0;
+let meterDecay = 0;
+let peakHold = 0;
+let peakHoldTimer = null;
+
+// ---- DOM refs ---------------------------------------------------------
+
+const statusDot     = document.getElementById('status-dot');
+const recordBtn     = document.getElementById('record-btn');
+const deviceSelect  = document.getElementById('device-select');
+const nameInput     = document.getElementById('name-input');
+const maxChunkInput = document.getElementById('max-chunk-input');
+const transcribeTog = document.getElementById('transcribe-toggle');
+const chunkFields   = document.getElementById('chunk-fields');
+const transcribeField = document.getElementById('transcribe-field');
+const modePills     = document.querySelectorAll('.mode-pill');
+const meterBar      = document.getElementById('meter-bar');
+const meterDbEl     = document.getElementById('meter-db');
+const meterPeakEl   = document.getElementById('meter-peak-hold');
+const elapsedEl     = document.getElementById('elapsed-value');
+const chunksEl      = document.getElementById('chunks-value');
+const queueBadge    = document.getElementById('queue-badge');
+const sessionLabel  = document.getElementById('session-label');
+const transcriptFeed = document.getElementById('transcript-feed');
+const liveEmpty     = document.getElementById('live-empty');
+const sessionsList  = document.getElementById('sessions-list');
+const sessionsEmpty = document.getElementById('sessions-empty');
+
+// ---- Tabs -------------------------------------------------------------
+
+document.querySelectorAll('.tab-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach((p) => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'sessions') loadSessions();
+  });
+});
+
+// ---- Mode pills -------------------------------------------------------
+
+modePills.forEach((pill) => {
+  pill.addEventListener('click', () => {
+    if (isRecording) return;
+    appMode = pill.dataset.mode;
+    modePills.forEach((p) => p.classList.toggle('active', p.dataset.mode === appMode));
+    updateModeUI();
+  });
+});
+
+function updateModeUI() {
+  chunkFields.style.display = appMode === 'chunk' ? '' : 'none';
+  transcribeField.style.display = appMode === 'listen' ? 'none' : '';
+}
+updateModeUI();
+
+// ---- Record button ----------------------------------------------------
+
+recordBtn.addEventListener('click', async () => {
+  if (isStopping) return;
+  if (isRecording) {
+    await doStop();
+  } else {
+    await doStart();
+  }
+});
+
+async function doStart() {
+  const body = {
+    mode: appMode,
+    device: deviceSelect.value || undefined,
+    name: nameInput.value.trim() || undefined,
+    root: rootInput.value.trim() || undefined,
+    transcribe: appMode !== 'listen' ? transcribeTog.checked : false,
+    maxChunkSeconds: appMode === 'chunk' ? (parseInt(maxChunkInput.value, 10) || 30) : undefined,
+  };
+
+  recordBtn.disabled = true;
+  try {
+    const r = await fetch('/api/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok) { alert('Start failed: ' + (data.error || r.status)); return; }
+  } catch (err) {
+    alert('Start failed: ' + err.message);
+  } finally {
+    recordBtn.disabled = false;
+  }
+}
+
+async function doStop() {
+  recordBtn.disabled = true;
+  isStopping = true;
+  recordBtn.textContent = 'Stopping…';
+  recordBtn.className = 'stopping';
+  try {
+    await fetch('/api/stop', { method: 'POST' });
+  } catch { /* ignore */ } finally {
+    recordBtn.disabled = false;
+  }
+}
+
+// ---- WebSocket message handler ----------------------------------------
+
+function handleMessage(msg) {
+  switch (msg.type) {
+
+    case 'status':
+      if (msg.mode && !isRecording) {
+        setRecordingState(true, msg.mode);
+      } else if (!msg.mode && isRecording) {
+        setRecordingState(false);
+      }
+      if (msg.elapsed != null) updateElapsed(msg.elapsed);
+      if (msg.chunkCount != null) updateChunkCount(msg.chunkCount);
+      if (msg.queueDepth != null) updateQueue(msg.queueDepth);
+      break;
+
+    case 'started':
+      setRecordingState(true, msg.mode);
+      clearTranscriptFeed();
+      if (msg.sessionDir) {
+        sessionLabel.textContent = msg.sessionDir;
+      }
+      break;
+
+    case 'peak':
+      onPeakData(msg.value);
+      break;
+
+    case 'chunk_started':
+      updateChunkCount(msg.chunkCount);
+      if (msg.wavPath) addChunkCard({ name: msg.name, wavPath: msg.wavPath, status: 'pending' });
+      break;
+
+    case 'chunk_complete':
+      updateChunkCard(msg);
+      if (msg.queueDepth != null) updateQueue(msg.queueDepth);
+      break;
+
+    case 'queue_overflow':
+      updateQueue(msg.depth);
+      break;
+
+    case 'stopping':
+      isStopping = true;
+      recordBtn.textContent = 'Stopping…';
+      recordBtn.className = 'stopping';
+      setStatusDot('stopping');
+      break;
+
+    case 'stopped':
+      setRecordingState(false);
+      break;
+
+    case 'server_info':
+      applyServerInfo(msg);
+      break;
+  }
+}
+
+// ---- Recording state --------------------------------------------------
+
+function setRecordingState(active, mode) {
+  isRecording = active;
+  isStopping = false;
+
+  if (active) {
+    recordBtn.textContent = 'Stop';
+    recordBtn.className = 'recording';
+    recordBtn.disabled = false;
+    setStatusDot('active');
+    modePills.forEach((p) => p.style.pointerEvents = 'none');
+    startElapsedTimer();
+  } else {
+    recordBtn.textContent = 'Start Recording';
+    recordBtn.className = '';
+    recordBtn.disabled = false;
+    setStatusDot('idle');
+    modePills.forEach((p) => p.style.pointerEvents = '');
+    stopElapsedTimer();
+    elapsedEl.textContent = '--:--';
+    chunksEl.textContent = '0';
+    updateQueue(0);
+    sessionLabel.textContent = '';
+    meterPeak = 0;
+  }
+}
+
+function setStatusDot(state) {
+  statusDot.className = state;
+}
+
+// ---- Elapsed timer ----------------------------------------------------
+
+function startElapsedTimer() {
+  const base = Date.now() - elapsedMs;
+  elapsedInterval = setInterval(() => {
+    elapsedMs = Date.now() - base;
+    renderElapsed(elapsedMs);
+  }, 500);
+}
+
+function stopElapsedTimer() {
+  clearInterval(elapsedInterval);
+  elapsedMs = 0;
+}
+
+function updateElapsed(ms) {
+  elapsedMs = ms;
+  renderElapsed(ms);
+  if (isRecording && !elapsedInterval) startElapsedTimer();
+}
+
+function renderElapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const h = Math.floor(m / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  const mm = String(m % 60).padStart(2, '0');
+  elapsedEl.textContent = h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+// ---- Chunk / queue counts ---------------------------------------------
+
+function updateChunkCount(n) {
+  chunkCount = n;
+  chunksEl.textContent = n;
+}
+
+function updateQueue(depth) {
+  queueDepth = depth;
+  if (depth > 0) {
+    queueBadge.textContent = `${depth} transcribing…`;
+    queueBadge.classList.add('visible');
+  } else {
+    queueBadge.classList.remove('visible');
+  }
+}
+
+// ---- Peak meter -------------------------------------------------------
+
+function onPeakData(value) {
+  if (value > meterPeak) meterPeak = value;
+  if (value > peakHold) {
+    peakHold = value;
+    clearTimeout(peakHoldTimer);
+    peakHoldTimer = setTimeout(() => { peakHold = 0; }, 2000);
+  }
+}
+
+(function animateMeter() {
+  meterDecay = meterDecay * 0.82 + meterPeak * 0.18;
+  meterPeak = 0;
+
+  const pct = Math.min(100, meterDecay * 100);
+  meterBar.style.width = pct + '%';
+
+  // Color: green (low) → yellow (mid) → red (hot)
+  const hue = Math.max(0, 120 - pct * 1.5);
+  const sat = 80 + pct * 0.2;
+  const lit = pct > 80 ? 42 : 45;
+  meterBar.style.background = `hsl(${hue}, ${sat}%, ${lit}%)`;
+
+  const db = meterDecay > 0 ? 20 * Math.log10(Math.max(0.00001, meterDecay)) : null;
+  meterDbEl.textContent = db != null ? db.toFixed(1) + ' dBFS' : '— dBFS';
+
+  if (peakHold > 0) {
+    const phDb = 20 * Math.log10(Math.max(0.00001, peakHold));
+    meterPeakEl.textContent = 'pk ' + phDb.toFixed(1);
+  } else {
+    meterPeakEl.textContent = '';
+  }
+
+  requestAnimationFrame(animateMeter);
+})();
+
+// ---- Transcript feed --------------------------------------------------
+
+const chunkCards = new Map(); // wavPath → element
+
+function clearTranscriptFeed() {
+  transcriptFeed.innerHTML = '';
+  transcriptFeed.appendChild(liveEmpty);
+  liveEmpty.style.display = '';
+  chunkCards.clear();
+}
+
+function addChunkCard({ name, wavPath, status, transcript }) {
+  liveEmpty.style.display = 'none';
+
+  const card = document.createElement('div');
+  card.className = `chunk-card status-${status || 'pending'}`;
+  card.dataset.wav = wavPath;
+  card.innerHTML = `
+    <div class="chunk-meta">
+      <span class="chunk-name">${escHtml(name)}</span>
+      <span class="chunk-status ${status || 'pending'}">${status || 'pending'}</span>
+    </div>
+    <div class="chunk-text empty">transcribing…</div>
+  `;
+  transcriptFeed.appendChild(card);
+  chunkCards.set(wavPath, card);
+  card.scrollIntoView({ behavior: 'smooth', block: 'end' });
+}
+
+function updateChunkCard({ name, wavPath, status, transcript, error }) {
+  let card = wavPath ? chunkCards.get(wavPath) : null;
+  if (!card) {
+    // Chunk completed without a prior started event (e.g. record mode).
+    addChunkCard({ name, wavPath, status });
+    card = chunkCards.get(wavPath);
+  }
+  card.className = `chunk-card status-${status}`;
+  const statusEl = card.querySelector('.chunk-status');
+  statusEl.textContent = status;
+  statusEl.className = `chunk-status ${status}`;
+
+  const textEl = card.querySelector('.chunk-text');
+  if (status === 'ok' && transcript) {
+    textEl.textContent = transcript;
+    textEl.className = 'chunk-text';
+  } else if (status === 'failed') {
+    textEl.textContent = error || 'Transcription failed.';
+    textEl.className = 'chunk-text empty';
+  } else if (status === 'skipped') {
+    textEl.textContent = 'Skipped (low audio level).';
+    textEl.className = 'chunk-text empty';
+  }
+}
+
+// ---- Session browser --------------------------------------------------
+
+let sessionData = [];
+let activeSession = null;
+
+async function loadSessions() {
+  sessionsEmpty.textContent = 'Loading…';
+  sessionsEmpty.style.display = '';
+  sessionsList.innerHTML = '';
+  sessionsList.appendChild(sessionsEmpty);
+  try {
+    const r = await fetch('/api/sessions');
+    sessionData = await r.json();
+  } catch (err) {
+    sessionsEmpty.textContent = 'Failed to load sessions.';
+    return;
+  }
+
+  if (!sessionData.length) {
+    sessionsEmpty.textContent = 'No sessions found in the recordings folder.';
+    return;
+  }
+  sessionsEmpty.style.display = 'none';
+
+  // Group by date
+  const byDate = {};
+  for (const s of sessionData) {
+    if (!byDate[s.date]) byDate[s.date] = [];
+    byDate[s.date].push(s);
+  }
+
+  sessionsList.innerHTML = '';
+  for (const date of Object.keys(byDate).sort().reverse()) {
+    const group = document.createElement('div');
+    group.className = 'session-group';
+    group.innerHTML = `<div class="session-date">${date}</div><div class="session-items" data-date="${date}"></div>`;
+    const items = group.querySelector('.session-items');
+
+    for (const s of byDate[date]) {
+      const label = s.name || '(unnamed)';
+      const item = document.createElement('div');
+      item.className = 'session-item';
+      item.innerHTML = `<span class="session-item-name">${escHtml(label)}</span>`;
+      item.addEventListener('click', () => openSession(s, item));
+      items.appendChild(item);
+    }
+    sessionsList.appendChild(group);
+  }
+}
+
+async function openSession(session, itemEl) {
+  document.querySelectorAll('.session-item').forEach((el) => el.classList.remove('active'));
+  itemEl.classList.add('active');
+  activeSession = session;
+
+  // Remove any existing detail panel
+  document.querySelectorAll('.session-detail').forEach((el) => el.remove());
+
+  let detail;
+  try {
+    const url = `/api/sessions/${session.date}${session.name ? `?name=${encodeURIComponent(session.name)}` : ''}`;
+    const r = await fetch(url);
+    detail = await r.json();
+  } catch (err) {
+    return;
+  }
+
+  const panel = document.createElement('div');
+  panel.className = 'session-detail';
+
+  if (!detail.chunks.length) {
+    panel.innerHTML = '<p style="color:var(--text3);font-size:12px;">No WAV files in this session.</p>';
+  }
+
+  for (const chunk of detail.chunks) {
+    const db = chunk.sidecar && chunk.sidecar.peakDb != null
+      ? chunk.sidecar.peakDb.toFixed(1) + ' dB'
+      : '';
+    const dur = chunk.sidecar && chunk.sidecar.durationMs != null
+      ? formatDurMs(chunk.sidecar.durationMs)
+      : '';
+
+    const div = document.createElement('div');
+    div.className = 'detail-chunk';
+    div.innerHTML = `
+      <div class="detail-chunk-left">
+        <div class="detail-chunk-name">${escHtml(chunk.wav)}</div>
+        <div class="detail-chunk-text ${chunk.transcript ? '' : 'none'}">
+          ${chunk.transcript ? escHtml(chunk.transcript) : 'No transcript.'}
+        </div>
+      </div>
+      <div style="text-align:right;flex-shrink:0;">
+        ${dur ? `<div class="detail-chunk-peak">${escHtml(dur)}</div>` : ''}
+        ${db  ? `<div class="detail-chunk-peak">${escHtml(db)}</div>`  : ''}
+      </div>
+    `;
+    panel.appendChild(div);
+  }
+
+  itemEl.insertAdjacentElement('afterend', panel);
+}
+
+// ---- Devices ----------------------------------------------------------
+
+async function loadDevices() {
+  try {
+    const r = await fetch('/api/devices');
+    if (!r.ok) return;
+    const devices = await r.json();
+    deviceSelect.innerHTML = '<option value="">Default</option>';
+    for (const d of devices) {
+      const opt = document.createElement('option');
+      opt.value = d.index != null ? String(d.index) : d.name;
+      opt.textContent = d.name + (d.isDefault ? ' (default)' : '');
+      deviceSelect.appendChild(opt);
+    }
+  } catch { /* sox not available or not on Windows — just leave Default */ }
+}
+
+// ---- Helpers ----------------------------------------------------------
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function formatDurMs(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  return m > 0 ? `${m}:${ss}` : `0:${ss}`;
+}
+
+// ---- Output directory -------------------------------------------------
+
+const rootInput    = document.getElementById('root-input');
+const rootResetBtn = document.getElementById('root-reset-btn');
+const rootHint     = document.getElementById('root-hint');
+
+let defaultRecordingsRoot = '';
+
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/config');
+    const cfg = await r.json();
+    defaultRecordingsRoot = cfg.recordingsRoot || '';
+    rootHint.textContent = defaultRecordingsRoot;
+    rootInput.placeholder = defaultRecordingsRoot || 'default (./recordings)';
+  } catch { /* server not ready yet */ }
+}
+
+rootInput.addEventListener('input', () => {
+  const val = rootInput.value.trim();
+  rootHint.textContent = val || defaultRecordingsRoot;
+});
+
+rootResetBtn.addEventListener('click', () => {
+  rootInput.value = '';
+  rootHint.textContent = defaultRecordingsRoot;
+});
+
+// ---- Model chip -------------------------------------------------------
+
+const modelChip = document.getElementById('model-chip');
+
+function applyServerInfo(info) {
+  if (!info || !info.modelName) return;
+  modelChip.textContent = info.modelName;
+  const binaryLabel = info.serverBinary
+    ? `via ${info.serverBinary}`
+    : info.binary
+    ? `via ${info.binary}`
+    : 'no binary found';
+  modelChip.title = `${info.modelPath || info.modelName}  ·  ${binaryLabel}`;
+  modelChip.style.display = '';
+}
+
+async function loadInfo() {
+  try {
+    const r = await fetch('/api/info');
+    if (!r.ok) return;
+    applyServerInfo(await r.json());
+  } catch { /* server not ready yet */ }
+}
+
+// ---- Init -------------------------------------------------------------
+
+loadDevices();
+loadConfig();
+loadInfo();
+</script>
+</body>
+</html>

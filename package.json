@@ -6,6 +6,7 @@
   "scripts": {
     "test": "jest --ci --forceExit",
     "start": "node src/index.js",
+    "ui": "node src/server.js",
     "docs:html": "node tools/build-html.js",
     "audio:check": "node tools/check-audio-deps.js",
     "model:download-base": "node tools/download-ggml-base-bin.js",
@@ -21,7 +22,9 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "node-record-lpcm16": "^1.0.1"
+    "express": "^5.2.1",
+    "node-record-lpcm16": "^1.0.1",
+    "ws": "^8.20.1"
   },
   "devDependencies": {
     "jest": "^29.7.0",
