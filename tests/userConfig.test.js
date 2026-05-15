@@ -71,6 +71,23 @@ describe('loadUserConfig', () => {
     expect(r.recordingsRoot).toBeNull();
     expect(r.transcribeModel).toBe(path.normalize('D:/models/ggml-base.bin'));
     expect(r.transcribeLanguage).toBe('en');
+    expect(r.transcribeSpeakerLabels).toBe(false);
+    expect(r.transcribeStereoDiarize).toBe(false);
+  });
+
+  test('reads transcribeSpeakerLabels and transcribeStereoDiarize when true', () => {
+    const cfgPath = path.join(homedir, '.localrecorder', 'config.json');
+    fs.writeFileSync(
+      cfgPath,
+      JSON.stringify({
+        transcribeSpeakerLabels: true,
+        transcribeStereoDiarize: true,
+      }),
+      'utf8',
+    );
+    const r = loadUserConfig({ homedir });
+    expect(r.transcribeSpeakerLabels).toBe(true);
+    expect(r.transcribeStereoDiarize).toBe(true);
   });
 
   test('empty JSON object still yields configPath', () => {
@@ -81,6 +98,8 @@ describe('loadUserConfig', () => {
     expect(r.recordingsRoot).toBeNull();
     expect(r.transcribeModel).toBeNull();
     expect(r.transcribeLanguage).toBeNull();
+    expect(r.transcribeSpeakerLabels).toBe(false);
+    expect(r.transcribeStereoDiarize).toBe(false);
   });
 
   test('returns null configPath when no file or invalid JSON', () => {
@@ -175,6 +194,8 @@ describe('mergeTranscribeFieldsFromUserConfig', () => {
       recordingsRoot: null,
       transcribeModel: path.normalize('D:/models/ggml-base.bin'),
       transcribeLanguage: 'en',
+      transcribeSpeakerLabels: false,
+      transcribeStereoDiarize: false,
       configPath: 'D:/x.json',
     };
     const out = await mergeTranscribeFieldsFromUserConfig(
@@ -190,6 +211,8 @@ describe('mergeTranscribeFieldsFromUserConfig', () => {
       recordingsRoot: null,
       transcribeModel: path.normalize('D:/cfg/model.bin'),
       transcribeLanguage: 'en',
+      transcribeSpeakerLabels: false,
+      transcribeStereoDiarize: false,
       configPath: null,
     };
     const out = await mergeTranscribeFieldsFromUserConfig(
@@ -209,6 +232,8 @@ describe('mergeTranscribeFieldsFromUserConfig', () => {
       recordingsRoot: null,
       transcribeModel: path.normalize('D:/cfg/en.bin'),
       transcribeLanguage: 'en',
+      transcribeSpeakerLabels: false,
+      transcribeStereoDiarize: false,
       configPath: null,
     };
     const dl = jest.fn().mockResolvedValue({ downloaded: true, path: 'x' });
@@ -264,6 +289,8 @@ describe('mergeTranscribeFieldsFromUserConfig', () => {
         recordingsRoot: null,
         transcribeModel: path.normalize('D:/cfg/ignored.bin'),
         transcribeLanguage: 'en',
+        transcribeSpeakerLabels: false,
+        transcribeStereoDiarize: false,
         configPath: null,
       };
       const out = await mergeTranscribeFieldsFromUserConfig(
@@ -368,5 +395,28 @@ describe('mergeTranscribeFieldsFromUserConfig', () => {
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
+  });
+
+  test('transcribeSpeakerLabels merges from config when CLI leaves it false', async () => {
+    const userCfg = {
+      recordingsRoot: null,
+      transcribeModel: path.normalize('D:/models/m.bin'),
+      transcribeLanguage: 'en',
+      transcribeSpeakerLabels: true,
+      transcribeStereoDiarize: false,
+      configPath: null,
+    };
+    const out = await mergeTranscribeFieldsFromUserConfig(
+      {
+        transcribeModel: path.normalize('D:/models/m.bin'),
+        transcribeLanguage: 'en',
+        multilingual: false,
+        transcribeSpeakerLabels: false,
+        transcribeStereoDiarize: false,
+      },
+      userCfg,
+    );
+    expect(out.transcribeSpeakerLabels).toBe(true);
+    expect(out.transcribeStereoDiarize).toBe(false);
   });
 });

@@ -7,6 +7,8 @@
 //   recordingsRoot | recordings_root | root — capture directory
 //   transcribeModel | whisperModel | model — default ggml path (relative to cwd ok)
 //   transcribeLanguage | whisperLanguage | defaultLanguage — whisper.cpp -l (e.g. en)
+//   transcribeSpeakerLabels — when true, enable whisper.cpp tinydiarize + JSON speaker lines (mono)
+//   transcribeStereoDiarize — when true, enable whisper.cpp --diarize (stereo WAV)
 //
 // CLI always wins over config. --multilingual: multilingual model (models/ggml-base.bin or
 // *.en.bin→sibling *.bin); whisper -l omitted unless --language is set (not "auto"), so
@@ -52,6 +54,11 @@ function pickTranscribeLanguage(obj) {
   return t;
 }
 
+function pickBool(obj, key) {
+  if (!obj || typeof obj !== 'object') return false;
+  return obj[key] === true;
+}
+
 function resolveModelPath(raw, cwd = process.cwd()) {
   if (raw == null) return null;
   const t = String(raw).trim();
@@ -82,6 +89,8 @@ function tryReadConfigObject(configPath, fsImpl = fs) {
  *   recordingsRoot: string | null,
  *   transcribeModel: string | null,
  *   transcribeLanguage: string | null,
+ *   transcribeSpeakerLabels: boolean,
+ *   transcribeStereoDiarize: boolean,
  *   configPath: string | null,
  * }}
  */
@@ -105,14 +114,25 @@ function loadUserConfig({
     const rootRaw = pickRecordingsRoot(data);
     const modelRaw = pickTranscribeModel(data);
     const lang = pickTranscribeLanguage(data);
+    const transcribeSpeakerLabels = pickBool(data, 'transcribeSpeakerLabels');
+    const transcribeStereoDiarize = pickBool(data, 'transcribeStereoDiarize');
     return {
       recordingsRoot: rootRaw ? path.normalize(path.isAbsolute(rootRaw) ? rootRaw : path.resolve(cwd, rootRaw)) : null,
       transcribeModel: resolveModelPath(modelRaw, cwd),
       transcribeLanguage: lang,
+      transcribeSpeakerLabels,
+      transcribeStereoDiarize,
       configPath: row.configPath,
     };
   }
-  return { recordingsRoot: null, transcribeModel: null, transcribeLanguage: null, configPath: null };
+  return {
+    recordingsRoot: null,
+    transcribeModel: null,
+    transcribeLanguage: null,
+    transcribeSpeakerLabels: false,
+    transcribeStereoDiarize: false,
+    configPath: null,
+  };
 }
 
 // No transcribeModel written — at runtime we probe for the best available model.
@@ -171,7 +191,17 @@ async function mergeTranscribeFieldsFromUserConfig(parsed, userCfg = loadUserCon
       downloadGgmlBaseBinIfMissing: downloadIfMissing,
     });
     const transcribeLanguage = multilingualWhisperLanguageHint(parsed.transcribeLanguage);
-    return { ...parsed, transcribeModel, transcribeLanguage };
+    const transcribeSpeakerLabels =
+      parsed.transcribeSpeakerLabels === true || userCfg.transcribeSpeakerLabels === true;
+    const transcribeStereoDiarize =
+      parsed.transcribeStereoDiarize === true || userCfg.transcribeStereoDiarize === true;
+    return {
+      ...parsed,
+      transcribeModel,
+      transcribeLanguage,
+      transcribeSpeakerLabels,
+      transcribeStereoDiarize,
+    };
   }
 
   const explicitModel =
@@ -193,7 +223,17 @@ async function mergeTranscribeFieldsFromUserConfig(parsed, userCfg = loadUserCon
   } else if (userCfg.transcribeLanguage) {
     transcribeLanguage = userCfg.transcribeLanguage;
   }
-  return { ...parsed, transcribeModel: mergedModel, transcribeLanguage };
+  const transcribeSpeakerLabels =
+    parsed.transcribeSpeakerLabels === true || userCfg.transcribeSpeakerLabels === true;
+  const transcribeStereoDiarize =
+    parsed.transcribeStereoDiarize === true || userCfg.transcribeStereoDiarize === true;
+  return {
+    ...parsed,
+    transcribeModel: mergedModel,
+    transcribeLanguage,
+    transcribeSpeakerLabels,
+    transcribeStereoDiarize,
+  };
 }
 
 module.exports = {

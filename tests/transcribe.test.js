@@ -11,6 +11,7 @@ const {
   resolveBinary,
   readTranscriptFile,
   transcribeFile,
+  resolveSpeakerLabelMode,
 } = require('../src/transcribe');
 
 // Minimal RIFF/WAVE header: 'RIFF', 4 bytes size, 'WAVE'. The first 12 bytes is all
@@ -221,6 +222,65 @@ describe('buildWhisperArgs', () => {
       '-f', 'a.wav',
     ]);
   });
+
+  test('speaker labels: tinydiarize inserts JSON flags before -f', () => {
+    expect(buildWhisperArgs({
+      model: 'm.bin',
+      wav: 'a.wav',
+      language: 'en',
+      speakerLabelMode: 'tinydiarize',
+    })).toEqual([
+      '--no-prints', '--output-txt', '-m', 'm.bin',
+      '-l', 'en',
+      '--tinydiarize', '--output-json', '--output-json-full',
+      '-f', 'a.wav',
+    ]);
+  });
+
+  test('speaker labels: stereo diarize inserts --diarize + JSON flags before -f', () => {
+    expect(buildWhisperArgs({
+      model: 'm.bin',
+      wav: 'a.wav',
+      speakerLabelMode: 'stereo',
+    })).toEqual([
+      '--no-prints', '--output-txt', '-m', 'm.bin',
+      '--diarize', '--output-json', '--output-json-full',
+      '-f', 'a.wav',
+    ]);
+  });
+});
+
+describe('resolveSpeakerLabelMode', () => {
+  const caps = {
+    outputJson: true,
+    outputJsonFull: true,
+    tinydiarize: true,
+    stereoDiarize: true,
+  };
+
+  test('prefers stereo mode when transcribeStereoDiarize is set', () => {
+    expect(resolveSpeakerLabelMode({
+      transcribeSpeakerLabels: true,
+      transcribeStereoDiarize: true,
+      caps,
+    })).toBe('stereo');
+  });
+
+  test('uses tinydiarize when only transcribeSpeakerLabels is set', () => {
+    expect(resolveSpeakerLabelMode({
+      transcribeSpeakerLabels: true,
+      transcribeStereoDiarize: false,
+      caps,
+    })).toBe('tinydiarize');
+  });
+
+  test('returns null when JSON outputs are not advertised', () => {
+    expect(resolveSpeakerLabelMode({
+      transcribeSpeakerLabels: true,
+      transcribeStereoDiarize: false,
+      caps: { ...caps, outputJson: false },
+    })).toBeNull();
+  });
 });
 
 describe('resolveBinary', () => {
@@ -322,6 +382,41 @@ describe('transcribeFile', () => {
     const [actualBinary, actualArgs] = spawnFn.mock.calls[0];
     expect(actualBinary).toBe('whisper-cli');
     expect(actualArgs).toEqual(['--no-prints', '--output-txt', '-m', model, '-f', wav]);
+  });
+
+  test('speaker labels: prefers formatted JSON transcript when tinydiarize mode succeeds', async () => {
+    fs.writeFileSync(path.join(tmpdir, 'sample.txt'), 'flat fallback\n');
+    const payload = {
+      segments: [
+        { text: ' Hello ', speaker_turn_next: false },
+        { text: ' there ', speaker_turn_next: true },
+        { text: ' friend ', speaker_turn_next: false },
+      ],
+    };
+    fs.writeFileSync(path.join(tmpdir, 'sample.json'), JSON.stringify(payload));
+    const caps = {
+      outputJson: true,
+      outputJsonFull: true,
+      tinydiarize: true,
+      stereoDiarize: true,
+    };
+    const spawnFn = makeFakeSpawn({ exitCode: 0 });
+
+    const out = await transcribeFile({
+      wav,
+      model,
+      binary: 'whisper-cli',
+      spawnFn,
+      transcribeSpeakerLabels: true,
+      whisperCapabilities: caps,
+    });
+
+    expect(out.speakerLabelMode).toBe('tinydiarize');
+    expect(out.jsonPath).toBe(path.join(tmpdir, 'sample.json'));
+    expect(out.text).toBe('Speaker 1: Hello there\n\nSpeaker 2: friend');
+    const [, actualArgs] = spawnFn.mock.calls[0];
+    expect(actualArgs).toContain('--tinydiarize');
+    expect(actualArgs).toContain('--output-json-full');
   });
 
   test('GPU-2: forwards gpu: false as --no-gpu and echoes the choice in the result', async () => {

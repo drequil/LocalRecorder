@@ -13,6 +13,8 @@ function expectShape(overrides = {}) {
     noGpu: false,
     gpuLayers: null,
     json: false,
+    transcribeSpeakerLabels: false,
+    transcribeStereoDiarize: false,
     ...overrides,
   };
 }

@@ -24,6 +24,8 @@ const {
   resolveWithVendor,
 } = require('../tools/check-transcribe-deps');
 const { trace } = require('./trace');
+const { getWhisperCliCapabilities } = require('./whisperCliCapabilities');
+const { extractSegments, formatSegmentsAsSpeakerTranscript } = require('./speakerTranscript');
 
 // T-2 spec says: "sensible default model (`./models/ggml-base.en.bin` if present, else
 // error)". This matches whisper-cli's own documented default (`-m FNAME` defaults to
@@ -44,6 +46,20 @@ function expectedTxtPaths(wavPath) {
   return [
     path.join(dir, `${stem}.txt`),
     `${wavPath}.txt`,
+  ];
+}
+
+// Same basename convention as .txt / whisper.cpp JSON export (-oj / -ojf).
+function expectedJsonPaths(wavPath) {
+  if (typeof wavPath !== 'string' || wavPath.length === 0) {
+    throw new TypeError('expectedJsonPaths: wavPath must be a non-empty string');
+  }
+  const dir = path.dirname(wavPath);
+  const ext = path.extname(wavPath);
+  const stem = path.basename(wavPath, ext);
+  return [
+    path.join(dir, `${stem}.json`),
+    `${wavPath}.json`,
   ];
 }
 
@@ -74,6 +90,7 @@ function buildWhisperArgs({
   model, wav, language = null, threads = null,
   noSpeechThreshold = null, entropyThreshold = null,
   gpu = null, gpuLayers = null,
+  speakerLabelMode = null,
 }) {
   if (!model) throw new TypeError('buildWhisperArgs: model is required');
   if (!wav) throw new TypeError('buildWhisperArgs: wav is required');
@@ -113,6 +130,11 @@ function buildWhisperArgs({
   if (language != null && String(language).trim() !== '') {
     args.push('-l', String(language).trim());
   }
+  if (speakerLabelMode === 'tinydiarize') {
+    args.push('--tinydiarize', '--output-json', '--output-json-full');
+  } else if (speakerLabelMode === 'stereo') {
+    args.push('--diarize', '--output-json', '--output-json-full');
+  }
   args.push('-f', wav);
   return args;
 }
@@ -128,16 +150,54 @@ function resolveBinary({ probe = probeBinary, candidates = WHISPER_CANDIDATES } 
 // Read whichever of expectedTxtPaths(wav) exists. Returns { text, txtPath } or null
 // if neither was produced (which we treat as an error: whisper-cli exited 0 but didn't
 // honour --output-txt).
-function readTranscriptFile(wav) {
+function readTranscriptFile(wav, fsImpl = fs) {
   for (const candidate of expectedTxtPaths(wav)) {
     try {
-      const text = fs.readFileSync(candidate, 'utf8').trim();
+      const text = fsImpl.readFileSync(candidate, 'utf8').trim();
       return { text, txtPath: candidate };
     } catch (err) {
       if (err && err.code === 'ENOENT') continue;
       throw err;
     }
   }
+  return null;
+}
+
+// Read whisper.cpp JSON output when -oj / -ojf were passed.
+function readWhisperJsonFile(wav, fsImpl = fs) {
+  for (const candidate of expectedJsonPaths(wav)) {
+    let raw;
+    try {
+      raw = fsImpl.readFileSync(candidate, 'utf8').trim();
+    } catch (err) {
+      if (err && err.code === 'ENOENT') continue;
+      throw err;
+    }
+    if (!raw) continue;
+    try {
+      const doc = JSON.parse(raw);
+      return { doc, jsonPath: candidate };
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        trace('whisper', 'json parse failed', { path: candidate, head: raw.slice(0, 120) });
+        continue;
+      }
+      throw e;
+    }
+  }
+  return null;
+}
+
+/** @returns {'tinydiarize' | 'stereo' | null} */
+function resolveSpeakerLabelMode({
+  transcribeSpeakerLabels,
+  transcribeStereoDiarize,
+  caps,
+}) {
+  if (!caps) return null;
+  const jsonOk = !!(caps.outputJson && caps.outputJsonFull);
+  if (transcribeStereoDiarize && caps.stereoDiarize && jsonOk) return 'stereo';
+  if (transcribeSpeakerLabels && caps.tinydiarize && jsonOk) return 'tinydiarize';
   return null;
 }
 
@@ -158,6 +218,9 @@ async function transcribeFile({
   spawnFn = spawn,
   resolveBinaryFn = resolveBinary,
   fsImpl = fs,
+  transcribeSpeakerLabels = false,
+  transcribeStereoDiarize = false,
+  whisperCapabilities = null,
 } = {}) {
   if (!wav || typeof wav !== 'string') {
     throw new Error('transcribe: wav path is required');
@@ -185,8 +248,46 @@ async function transcribeFile({
     );
   }
 
-  const args = buildWhisperArgs({ model, wav, language, threads, noSpeechThreshold, entropyThreshold, gpu, gpuLayers });
-  trace('whisper', 'spawn', { binary: resolvedBinary, args, wav, model, language: language || null, gpu, gpuLayers });
+  const caps = whisperCapabilities !== undefined && whisperCapabilities !== null
+    ? whisperCapabilities
+    : getWhisperCliCapabilities(resolvedBinary);
+
+  const wantSpeakers = transcribeSpeakerLabels === true || transcribeStereoDiarize === true;
+  const speakerMode = resolveSpeakerLabelMode({
+    transcribeSpeakerLabels: transcribeSpeakerLabels === true,
+    transcribeStereoDiarize: transcribeStereoDiarize === true,
+    caps,
+  });
+
+  if (wantSpeakers && !speakerMode) {
+    trace('whisper', 'speaker labels unavailable for this whisper-cli build — using plain transcript', {
+      transcribeSpeakerLabels,
+      transcribeStereoDiarize,
+      caps,
+    });
+  }
+
+  const args = buildWhisperArgs({
+    model,
+    wav,
+    language,
+    threads,
+    noSpeechThreshold,
+    entropyThreshold,
+    gpu,
+    gpuLayers,
+    speakerLabelMode: speakerMode,
+  });
+  trace('whisper', 'spawn', {
+    binary: resolvedBinary,
+    args,
+    wav,
+    model,
+    language: language || null,
+    gpu,
+    gpuLayers,
+    speakerLabelMode: speakerMode,
+  });
   const startedAt = Date.now();
 
   let stdout = '';
@@ -210,7 +311,7 @@ async function transcribeFile({
     throw err;
   }
 
-  const transcript = readTranscriptFile(wav);
+  const transcript = readTranscriptFile(wav, fsImpl);
   if (transcript === null) {
     trace('whisper', 'exit 0 but no .txt found', { tried: expectedTxtPaths(wav), stderrHead: (stderr || '').slice(0, 400) });
     const tried = expectedTxtPaths(wav).join(' | ');
@@ -222,20 +323,47 @@ async function transcribeFile({
     );
   }
 
+  let textOut = transcript.text;
+  /** @type {string | null} */
+  let jsonPath = null;
+  if (speakerMode) {
+    const jsonRow = readWhisperJsonFile(wav, fsImpl);
+    if (jsonRow) {
+      jsonPath = jsonRow.jsonPath;
+      const segs = extractSegments(jsonRow.doc);
+      const labeled = formatSegmentsAsSpeakerTranscript(segs);
+      if (labeled.trim().length > 0) {
+        textOut = labeled;
+      } else {
+        trace('whisper', 'speaker labels empty after parsing JSON; keeping flat .txt', {
+          wav,
+          segmentCount: segs.length,
+        });
+      }
+    } else {
+      trace('whisper', 'speaker mode but JSON missing; keeping flat .txt', {
+        tried: expectedJsonPaths(wav),
+      });
+    }
+  }
+
   trace('whisper', 'success', {
     durationMs,
     txtPath: transcript.txtPath,
-    textChars: (transcript.text || '').length,
+    textChars: (textOut || '').length,
+    speakerLabelMode: speakerMode,
   });
 
   return {
-    text: transcript.text,
+    text: textOut,
     model,
     wav,
     language: language != null && String(language).trim() !== '' ? String(language).trim() : null,
     binary: resolvedBinary,
     durationMs,
     txtPath: transcript.txtPath,
+    jsonPath,
+    speakerLabelMode: speakerMode,
     exitCode,
     // GPU intent that was passed to whisper.cpp. The CLI doesn't echo back
     // whether the GPU was actually used (that would require parsing stderr
@@ -249,9 +377,12 @@ async function transcribeFile({
 module.exports = {
   DEFAULT_MODEL_PATH,
   expectedTxtPaths,
+  expectedJsonPaths,
   isWavFile,
   buildWhisperArgs,
   resolveBinary,
   readTranscriptFile,
+  readWhisperJsonFile,
+  resolveSpeakerLabelMode,
   transcribeFile,
 };

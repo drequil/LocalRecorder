@@ -24,6 +24,8 @@ function expectIdleShape(overrides = {}) {
     noGpu: false,
     gpuLayers: null,
     trace: false,
+    transcribeSpeakerLabels: false,
+    transcribeStereoDiarize: false,
     ...overrides,
   };
 }

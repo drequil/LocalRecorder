@@ -19,7 +19,9 @@
 //       "model":    string,
 //       "language": string | null,
 //       "gpu":      true | false | null,  // capture-time intent (see audioRecorder)
-//       "gpuLayers": number | null        // -ngl <N> if set
+//       "gpuLayers": number | null,       // -ngl <N> if set
+//       "speakerLabels": true?,           // tinydiarize + JSON speaker lines (mono)
+//       "stereoDiarize": true?           // whisper.cpp --diarize (stereo WAV)
 //     }
 //   }
 //
@@ -91,7 +93,7 @@ function buildSidecar({
       gpu === true && Number.isInteger(transcribe.gpuLayers) && transcribe.gpuLayers > 0
         ? transcribe.gpuLayers
         : null;
-    out.transcribe = {
+    const row = {
       model: transcribe.model != null ? String(transcribe.model) : null,
       language: transcribe.language != null && String(transcribe.language).trim() !== ''
         ? String(transcribe.language).trim()
@@ -99,6 +101,9 @@ function buildSidecar({
       gpu,
       gpuLayers,
     };
+    if (transcribe.speakerLabels === true) row.speakerLabels = true;
+    if (transcribe.stereoDiarize === true) row.stereoDiarize = true;
+    out.transcribe = row;
   }
   return out;
 }

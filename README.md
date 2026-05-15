@@ -173,7 +173,9 @@ By default both `record` and `idle` write under `./recordings/`, into a session 
 | `--model <path>` | idle / transcribe | path | Path to a whisper.cpp ggml model. Default: `./models/ggml-base.en.bin`. For `idle`, only used when `--transcribe` is also set; failing existence check before capture starts. |
 | `--transcribe-min-peak P` | idle | number 0..1 (or 0..100 as %) | Skip chunks whose sidecar `peak` is below P (dead-air gate). Default `0.005` (~−46 dBFS). Skipped chunks still get a `.md` stub explaining why. `0` disables the gate. |
 | `--transcribe-queue-max N` | idle | positive number | Warn (once, debounced) when the transcription queue depth exceeds N. Default `5`. Capture is never blocked; the warning just tells you transcription is falling behind. `0` disables the warning. |
-| `--json` | transcribe | flag | Emit a JSON payload (`{ text, model, wav, durationMs, binary, txtPath, version, versionLabel }`) instead of plain text. |
+| `--transcribe-speakers` | record / idle / transcribe | flag | When transcribing, label turns as **Speaker 1**, **Speaker 2**, … via whisper.cpp tinydiarize (`--tinydiarize`) and JSON output. Requires a CLI build that exposes those flags and a compatible tinydiarize model. Speaker labeling uses **whisper-cli per chunk** (not `whisper-server`). If your build cannot do tinydiarize/JSON, LocalRecorder falls back to the usual flat transcript. |
+| `--transcribe-stereo-diarize` | record / idle / transcribe | flag | Pass whisper.cpp `--diarize` for stereo WAV (one speaker per channel). If both this and `--transcribe-speakers` are set, stereo mode wins. Same CLI-only behaviour as `--transcribe-speakers`. |
+| `--json` | transcribe | flag | Emit a JSON payload (`text`, `model`, `wav`, `durationMs`, `binary`, `txtPath`, optional `jsonPath` / `speakerLabelMode`, `version`, `versionLabel`) instead of plain text. |
 
 ### Per-chunk artifacts
 

@@ -1,5 +1,7 @@
 {
   "recordingsRoot": "D:/recordings",
   "transcribeModel": "models/ggml-base.en.bin",
-  "transcribeLanguage": "en"
+  "transcribeLanguage": "en",
+  "transcribeSpeakerLabels": false,
+  "transcribeStereoDiarize": false
 }
