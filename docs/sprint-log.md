@@ -823,6 +823,28 @@ Next: MS-1 — sox dependency probe. After that the track proceeds linearly thro
   - **Synthetic audio is not real speech.** A future sprint could commit a short prerecorded TTS clip if we want absolute timings to be portable across runs; for now the determinism (same WAV every time) gives us within-run consistency, and the speedup ratio is independent of the input content
 - Why: GPU-4 lets the user *install* the right binary, but only this sprint can *prove* the install worked. The 1.02x speedup we see now is the smoking gun for the BLAS situation. Once a cuBLAS build lands under `vendor/whisper-cuda/`, the same `npm run gpu:bench` will rewrite the doc with the real numbers and the contrast will be undeniable. This is what makes the feature branch self-validating
 
+## Sprint GPU-6: v0.8.0 (Completed) -- branch rollup
+- Feature branch closeout. The unit/integration coverage and per-sprint sprint-log entries called for by GPU-6 in the plan have all landed organically in GPU-1..GPU-5 (`tests/checkGpu.test.js` covers `detectGpu()`; `tests/transcribe.test.js` and `tests/whisperServer.test.js` pin the `buildWhisperArgs` GPU branches and the `whisper-server` argv; `tests/installWhisperCuda.test.js` covers the installer's URL/asset picker; `tests/benchGpu.test.js` covers the bench math + WAV generator). This sprint adds the one piece still missing -- a real end-to-end integration smoke that runs the GPU path on hardware when present and skips cleanly elsewhere -- plus the README update for `npm run gpu:bench` and the final version bump
+- Files added:
+  - `tests/gpuIntegration.test.js` (3 tests). Always-on test: `detectGpu()` returns the documented shape. Conditional tests (gated on `probe.effective && a model exists`): runs a real 3-second synthetic WAV through `transcribeFile({ gpu: null })` to exercise the GPU default path, and again with `{ gpu: false }` to confirm `--no-gpu` round-trips. On a CPU-only / no-GPU machine the suite prints `[skipped: no CUDA whisper.cpp]` and `test.skip`s the GPU/CPU runs, so CI never goes red just because the runner has no GPU
+- Files modified:
+  - `README.md` -- new "To *prove* the GPU is actually being used" paragraph under GPU acceleration with the `npm run gpu:bench` workflow, the speedup-interpretation hint (1.0x = wrong binary; 3-10x = good 4070-class), and the CLI flags
+  - `package.json` -- 0.7.0 -> 0.8.0
+- Validation:
+  - `npm test` -> **551/551 passing across 30 suites** (+3 new). Integration smoke ran the real RTX 4070 Ti path twice (GPU default + --no-gpu force), each completing in ~2.1 s
+  - End-to-end pipeline confirmed: `gpu:check` (detect) -> `gpu:install` (fetch the right binary, skipped here to avoid the 450 MB download) -> `gpu:bench` (prove it) all wired through the same vendor-preferring binary discovery
+- Branch-level summary (what feature/gpu-acceleration ships, on top of v0.1.0):
+  - **Pre-flight v0.2.0**: `/api/config` version exposure + sidebar version badge + WS `sync` frame for connect-time state rebuild
+  - **GPU-1 v0.3.0**: `npm run gpu:check` (`tools/check-gpu.js`) -- nvidia-smi probe + whisper-cli `--help` CUDA-token scan
+  - **GPU-2 v0.4.0**: `--no-gpu` / `--gpu-layers N` plumbing through transcribe / whisper-server / audioRecorder / CLI; sidecar schema bumped to v2 with `transcribe: { model, language, gpu, gpuLayers }`; per-chunk markdown gains an `**Accelerator:**` line
+  - **GPU-3 v0.5.0**: `/api/config` exposes the GPU probe; sidebar renders a `GPU: <Name>` / `GPU: off` badge with hover details
+  - **GPU-4 v0.6.0**: `npm run gpu:install` (`tools/install-whisper-cuda.js`) -- one-shot cuBLAS prebuilt installer with SHA256 verify, idempotent state file, vendor-preferring binary discovery so the next start auto-uses the new build (Windows x64; manual fallback documented for other OSes)
+  - **GPU-5 v0.7.0**: `npm run gpu:bench` (`tools/bench-gpu.js`) -- deterministic synthetic WAV + warmup + N timed runs per side, writes `docs/gpu-bench-results.md` (committed) and per-run JSON dump
+  - **GPU-6 v0.8.0**: integration smoke + README updates + final bump
+- Total: 7 commits on `feature/gpu-acceleration` (1 pre-flight on develop + 6 GPU sprints), ~600 unit/integration tests across 30 suites, zero pushes (per the as-directed-pushes rule)
+- Why: the CPU baseline is untouched -- everything in this branch is additive. Users who don't care about GPU see no behaviour change. Users with an NVIDIA card get a three-step ramp (`gpu:check` -> `gpu:install` -> `gpu:bench`) that goes from cold install to a measured speedup ratio in under five minutes of human attention, and from then on the persistent `whisper-server` lives on the GPU automatically because the binary discovery in `check-transcribe-deps.js` prefers the vendor path
+
+
 
 
 

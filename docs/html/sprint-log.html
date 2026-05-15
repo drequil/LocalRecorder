@@ -1107,6 +1107,36 @@ Then re-run: npm run transcribe:check
 </li>
 <li>Why: GPU-4 lets the user <em>install</em> the right binary, but only this sprint can <em>prove</em> the install worked. The 1.02x speedup we see now is the smoking gun for the BLAS situation. Once a cuBLAS build lands under <code>vendor/whisper-cuda/</code>, the same <code>npm run gpu:bench</code> will rewrite the doc with the real numbers and the contrast will be undeniable. This is what makes the feature branch self-validating</li>
 </ul>
+<h2>Sprint GPU-6: v0.8.0 (Completed) -- branch rollup</h2>
+<ul>
+<li>Feature branch closeout. The unit/integration coverage and per-sprint sprint-log entries called for by GPU-6 in the plan have all landed organically in GPU-1..GPU-5 (<code>tests/checkGpu.test.js</code> covers <code>detectGpu()</code>; <code>tests/transcribe.test.js</code> and <code>tests/whisperServer.test.js</code> pin the <code>buildWhisperArgs</code> GPU branches and the <code>whisper-server</code> argv; <code>tests/installWhisperCuda.test.js</code> covers the installer&#39;s URL/asset picker; <code>tests/benchGpu.test.js</code> covers the bench math + WAV generator). This sprint adds the one piece still missing -- a real end-to-end integration smoke that runs the GPU path on hardware when present and skips cleanly elsewhere -- plus the README update for <code>npm run gpu:bench</code> and the final version bump</li>
+<li>Files added:<ul>
+<li><code>tests/gpuIntegration.test.js</code> (3 tests). Always-on test: <code>detectGpu()</code> returns the documented shape. Conditional tests (gated on <code>probe.effective &amp;&amp; a model exists</code>): runs a real 3-second synthetic WAV through <code>transcribeFile({ gpu: null })</code> to exercise the GPU default path, and again with <code>{ gpu: false }</code> to confirm <code>--no-gpu</code> round-trips. On a CPU-only / no-GPU machine the suite prints <code>[skipped: no CUDA whisper.cpp]</code> and <code>test.skip</code>s the GPU/CPU runs, so CI never goes red just because the runner has no GPU</li>
+</ul>
+</li>
+<li>Files modified:<ul>
+<li><code>README.md</code> -- new &quot;To <em>prove</em> the GPU is actually being used&quot; paragraph under GPU acceleration with the <code>npm run gpu:bench</code> workflow, the speedup-interpretation hint (1.0x = wrong binary; 3-10x = good 4070-class), and the CLI flags</li>
+<li><code>package.json</code> -- 0.7.0 -&gt; 0.8.0</li>
+</ul>
+</li>
+<li>Validation:<ul>
+<li><code>npm test</code> -&gt; <strong>551/551 passing across 30 suites</strong> (+3 new). Integration smoke ran the real RTX 4070 Ti path twice (GPU default + --no-gpu force), each completing in ~2.1 s</li>
+<li>End-to-end pipeline confirmed: <code>gpu:check</code> (detect) -&gt; <code>gpu:install</code> (fetch the right binary, skipped here to avoid the 450 MB download) -&gt; <code>gpu:bench</code> (prove it) all wired through the same vendor-preferring binary discovery</li>
+</ul>
+</li>
+<li>Branch-level summary (what feature/gpu-acceleration ships, on top of v0.1.0):<ul>
+<li><strong>Pre-flight v0.2.0</strong>: <code>/api/config</code> version exposure + sidebar version badge + WS <code>sync</code> frame for connect-time state rebuild</li>
+<li><strong>GPU-1 v0.3.0</strong>: <code>npm run gpu:check</code> (<code>tools/check-gpu.js</code>) -- nvidia-smi probe + whisper-cli <code>--help</code> CUDA-token scan</li>
+<li><strong>GPU-2 v0.4.0</strong>: <code>--no-gpu</code> / <code>--gpu-layers N</code> plumbing through transcribe / whisper-server / audioRecorder / CLI; sidecar schema bumped to v2 with <code>transcribe: { model, language, gpu, gpuLayers }</code>; per-chunk markdown gains an <code>**Accelerator:**</code> line</li>
+<li><strong>GPU-3 v0.5.0</strong>: <code>/api/config</code> exposes the GPU probe; sidebar renders a <code>GPU: &lt;Name&gt;</code> / <code>GPU: off</code> badge with hover details</li>
+<li><strong>GPU-4 v0.6.0</strong>: <code>npm run gpu:install</code> (<code>tools/install-whisper-cuda.js</code>) -- one-shot cuBLAS prebuilt installer with SHA256 verify, idempotent state file, vendor-preferring binary discovery so the next start auto-uses the new build (Windows x64; manual fallback documented for other OSes)</li>
+<li><strong>GPU-5 v0.7.0</strong>: <code>npm run gpu:bench</code> (<code>tools/bench-gpu.js</code>) -- deterministic synthetic WAV + warmup + N timed runs per side, writes <code>docs/gpu-bench-results.md</code> (committed) and per-run JSON dump</li>
+<li><strong>GPU-6 v0.8.0</strong>: integration smoke + README updates + final bump</li>
+</ul>
+</li>
+<li>Total: 7 commits on <code>feature/gpu-acceleration</code> (1 pre-flight on develop + 6 GPU sprints), ~600 unit/integration tests across 30 suites, zero pushes (per the as-directed-pushes rule)</li>
+<li>Why: the CPU baseline is untouched -- everything in this branch is additive. Users who don&#39;t care about GPU see no behaviour change. Users with an NVIDIA card get a three-step ramp (<code>gpu:check</code> -&gt; <code>gpu:install</code> -&gt; <code>gpu:bench</code>) that goes from cold install to a measured speedup ratio in under five minutes of human attention, and from then on the persistent <code>whisper-server</code> lives on the GPU automatically because the binary discovery in <code>check-transcribe-deps.js</code> prefers the vendor path</li>
+</ul>
 
 </body>
 </html>

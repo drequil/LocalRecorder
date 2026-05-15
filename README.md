@@ -320,6 +320,21 @@ Binary discovery in this project prefers `vendor/whisper-cuda/whisper-cli.exe` a
 
 Manual install fallback (if you want to pin a specific CUDA toolkit version): grab the ZIP from <https://github.com/ggerganov/whisper.cpp/releases> and extract into `vendor/whisper-cuda/`.
 
+To *prove* the GPU is actually being used:
+
+```bash
+npm run gpu:bench
+```
+
+That runs the same synthetic 10-second WAV through `whisper-cli` twice for each model under `models/*.bin` (once with `--no-gpu`, once with the binary's default), reports wall-clock mean/median and a CPU/GPU speedup ratio, and writes:
+
+- `docs/gpu-bench-results.md` (committed, overwritten each run).
+- `recordings/.bench/bench-<ts>.json` (gitignored, every per-sample timing for downstream analysis).
+
+A speedup of ~1.0x means the binary on disk is CPU-only or the GPU isn't being driven — exactly what `gpu:install` is for. A speedup of 3-10x on `base.en` / `small.en` / `medium.en` is normal for a 4070-class GPU and is the green light to flip your live recordings onto a larger model.
+
+Flags: `--runs N` (timed samples per side, default 3), `--duration S` (synthetic WAV length, default 10), `--threads N` (CPU threads passed to whisper.cpp), `--model PATH` (override auto-discovery, can repeat).
+
 ### Model trade-offs
 
 `whisper.cpp` ships multiple ggml models. Bigger = better accuracy but

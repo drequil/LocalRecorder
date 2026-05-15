@@ -401,6 +401,16 @@ default), step up to a bigger model -- see the table below.</p>
 <p>Binary discovery in this project prefers <code>vendor/whisper-cuda/whisper-cli.exe</code> and <code>vendor/whisper-cuda/whisper-server.exe</code> over PATH, so once the installer finishes the next <code>npm start</code> / <code>npm run ui</code> automatically uses the cuBLAS build. No PATH edits, no shell restart.</p>
 <p><code>vendor/</code> is gitignored. The installer is Windows-only because whisper.cpp publishes prebuilt cuBLAS ZIPs only for Windows x64; on macOS / Linux, build whisper.cpp from source with CUDA support and either put it on PATH or copy into <code>vendor/whisper-cuda/</code> manually.</p>
 <p>Manual install fallback (if you want to pin a specific CUDA toolkit version): grab the ZIP from <a href="https://github.com/ggerganov/whisper.cpp/releases">https://github.com/ggerganov/whisper.cpp/releases</a> and extract into <code>vendor/whisper-cuda/</code>.</p>
+<p>To <em>prove</em> the GPU is actually being used:</p>
+<pre><code class="language-bash">npm run gpu:bench
+</code></pre>
+<p>That runs the same synthetic 10-second WAV through <code>whisper-cli</code> twice for each model under <code>models/*.bin</code> (once with <code>--no-gpu</code>, once with the binary&#39;s default), reports wall-clock mean/median and a CPU/GPU speedup ratio, and writes:</p>
+<ul>
+<li><code>docs/gpu-bench-results.md</code> (committed, overwritten each run).</li>
+<li><code>recordings/.bench/bench-&lt;ts&gt;.json</code> (gitignored, every per-sample timing for downstream analysis).</li>
+</ul>
+<p>A speedup of ~1.0x means the binary on disk is CPU-only or the GPU isn&#39;t being driven — exactly what <code>gpu:install</code> is for. A speedup of 3-10x on <code>base.en</code> / <code>small.en</code> / <code>medium.en</code> is normal for a 4070-class GPU and is the green light to flip your live recordings onto a larger model.</p>
+<p>Flags: <code>--runs N</code> (timed samples per side, default 3), <code>--duration S</code> (synthetic WAV length, default 10), <code>--threads N</code> (CPU threads passed to whisper.cpp), <code>--model PATH</code> (override auto-discovery, can repeat).</p>
 <h3>Model trade-offs</h3>
 <p><code>whisper.cpp</code> ships multiple ggml models. Bigger = better accuracy but
 slower and more memory. The realtime ratios below are rough CPU estimates
