@@ -7,7 +7,8 @@ const AudioRecorder = require('./audioRecorder');
 const { enumerateDevices } = require('./audioDevices');
 const { effectiveRecordingsRoot, loadUserConfig, ensureDefaultUserConfigIfMissing } = require('./userConfig');
 const { resolveRecordPath, resolveIdleDirectory } = require('./recordingPaths');
-const { DEFAULT_MODEL_PATH, resolveBinary } = require('./transcribe');
+const { DEFAULT_MODEL_PATH, resolveBinary, resolveSpeakerLabelMode } = require('./transcribe');
+const { getWhisperCliCapabilities } = require('./whisperCliCapabilities');
 const { resolveBestAvailableModel } = require('./whisperModelPreset');
 const { WhisperServer } = require('./whisperServer');
 const { detectGpu } = require('../tools/check-gpu');
@@ -59,6 +60,40 @@ function getServerInfo() {
   };
   _serverInfo = { modelPath, modelName, binary, serverBinary, gpu };
   return _serverInfo;
+}
+
+/** Exposed via GET /api/config so the UI can explain plain-vs-speaker transcripts. */
+function getSpeakerLabelsCapabilityPayload() {
+  const binary = resolveBinary();
+  if (!binary) {
+    return {
+      monoSupported: false,
+      whisperCliPresent: false,
+      caps: null,
+    };
+  }
+  const caps = getWhisperCliCapabilities(binary);
+  if (!caps) {
+    return {
+      monoSupported: false,
+      whisperCliPresent: true,
+      caps: null,
+    };
+  }
+  const mode = resolveSpeakerLabelMode({
+    transcribeSpeakerLabels: true,
+    transcribeStereoDiarize: false,
+    caps,
+  });
+  return {
+    monoSupported: mode === 'tinydiarize',
+    whisperCliPresent: true,
+    caps: {
+      tinydiarize: caps.tinydiarize,
+      outputJson: caps.outputJson,
+      outputJsonFull: caps.outputJsonFull,
+    },
+  };
 }
 
 // ---- State ----------------------------------------------------------------
@@ -235,7 +270,13 @@ app.get('/api/config', (_req, res) => {
   // GPU-3: also surface the GPU probe so the sidebar can render a status
   // badge alongside model and version. Same cached probe used by /api/info.
   const { gpu } = getServerInfo();
-  res.json({ recordingsRoot: root, configPath: userCfg.configPath, version: SERVER_VERSION, gpu });
+  res.json({
+    recordingsRoot: root,
+    configPath: userCfg.configPath,
+    version: SERVER_VERSION,
+    gpu,
+    speakerLabels: getSpeakerLabelsCapabilityPayload(),
+  });
 });
 
 app.get('/api/status', (_req, res) => {

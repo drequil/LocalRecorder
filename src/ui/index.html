@@ -192,6 +192,16 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   cursor: not-allowed;
 }
 
+/* Sidebar hint when Speakers is on but whisper-cli cannot do tinydiarize + JSON */
+.speakers-cap-hint {
+  font-size: 10px;
+  color: var(--orange);
+  line-height: 1.38;
+  margin-top: 6px;
+  max-width: 100%;
+}
+.speakers-cap-hint[hidden] { display: none !important; }
+
 /* ---- Record button ---- */
 #record-btn {
   width: 100%;
@@ -390,6 +400,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
           <input type="range" id="speakers-slider" min="0" max="1" step="1" value="1" aria-valuetext="on">
           <span id="speakers-label-on" class="speakers-end-label is-active">On</span>
         </div>
+        <p id="speakers-cap-hint" class="speakers-cap-hint" hidden></p>
       </div>
     </div>
 
@@ -504,6 +515,11 @@ const transcribeField = document.getElementById('transcribe-field');
 const speakersField = document.getElementById('speakers-field');
 const SPEAKERS_STORAGE_KEY = 'lr-ui-speakers-on';
 const SPEAKERS_STORAGE_LEGACY = 'lr-ui-diary-on';
+
+/** From GET /api/config — drives whisper-cpp capability banner under Speakers */
+let cachedSpeakerLabelsPayload = null;
+
+const speakersCapHint = document.getElementById('speakers-cap-hint');
 const modePills     = document.querySelectorAll('.mode-pill');
 const meterBar      = document.getElementById('meter-bar');
 const meterDbEl     = document.getElementById('meter-db');
@@ -555,11 +571,56 @@ function syncSpeakersSliderUi() {
   speakersSlider.setAttribute('aria-valuetext', on ? 'on' : 'off');
   speakersLabelOff.classList.toggle('is-active', !on);
   speakersLabelOn.classList.toggle('is-active', on);
+  refreshSpeakersCapabilityBanner();
 }
 
 function syncSpeakersEnabledState() {
   const transcribeRelevant = appMode !== 'listen' && transcribeTog.checked;
   speakersSlider.disabled = !transcribeRelevant;
+  refreshSpeakersCapabilityBanner();
+}
+
+function speakerLabelsShortHint(sl) {
+  if (!sl || sl.monoSupported) return '';
+  if (!sl.whisperCliPresent) return 'Speaker labels need whisper-cli on PATH.';
+  if (!sl.caps) return 'Could not read whisper-cli capabilities (--help).';
+  const missing = [];
+  if (!sl.caps.tinydiarize) missing.push('tinydiarize');
+  if (!sl.caps.outputJson || !sl.caps.outputJsonFull) missing.push('JSON output');
+  return missing.length
+    ? `Labels need whisper-cpp with ${missing.join(' + ')} — transcript stays plain for now.`
+    : 'Speaker labels unavailable with this whisper-cli.';
+}
+
+function speakerLabelsDetailTooltip(sl) {
+  if (!sl || sl.monoSupported) return '';
+  const parts = [];
+  if (!sl.whisperCliPresent) parts.push('Install whisper-cli and ensure it is on PATH (npm run transcribe:check).');
+  if (!sl.caps && sl.whisperCliPresent) parts.push('whisper-cli --help probe failed.');
+  if (sl.caps && !sl.caps.tinydiarize) {
+    parts.push('Rebuild whisper.cpp so --help lists --tinydiarize (-tdrz).');
+  }
+  if (sl.caps && (!sl.caps.outputJson || !sl.caps.outputJsonFull)) {
+    parts.push('Rebuild whisper.cpp so --help lists --output-json and --output-json-full (-oj / -ojf).');
+  }
+  parts.push('Prefer a tinydiarize-capable GGML model (README).');
+  return parts.join(' ');
+}
+
+function refreshSpeakersCapabilityBanner() {
+  if (!speakersCapHint) return;
+  const sl = cachedSpeakerLabelsPayload;
+  const transcribeRelevant = appMode !== 'listen' && transcribeTog.checked;
+  const speakersRequested = speakersLabelsOn();
+  if (!transcribeRelevant || !speakersRequested || !sl || sl.monoSupported) {
+    speakersCapHint.hidden = true;
+    speakersCapHint.removeAttribute('title');
+    speakersCapHint.textContent = '';
+    return;
+  }
+  speakersCapHint.hidden = false;
+  speakersCapHint.textContent = speakerLabelsShortHint(sl);
+  speakersCapHint.title = speakerLabelsDetailTooltip(sl);
 }
 
 function updateModeUI() {
@@ -1108,6 +1169,8 @@ async function loadConfig() {
     rootInput.placeholder = defaultRecordingsRoot || 'default (./recordings)';
     if (cfg.version) versionBadge.textContent = `v${cfg.version}`;
     renderGpuBadge(cfg.gpu);
+    cachedSpeakerLabelsPayload = cfg.speakerLabels || null;
+    refreshSpeakersCapabilityBanner();
   } catch { /* server not ready yet */ }
 }
 

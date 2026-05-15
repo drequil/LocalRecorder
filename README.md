@@ -177,6 +177,8 @@ By default both `record` and `idle` write under `./recordings/`, into a session 
 | `--transcribe-stereo-diarize` | record / idle / transcribe | flag | Pass whisper.cpp `--diarize` for stereo WAV (one speaker per channel). If both this and `--transcribe-speakers` are set, stereo mode wins. Same CLI-only behaviour as `--transcribe-speakers`. |
 | `--json` | transcribe | flag | Emit a JSON payload (`text`, `model`, `wav`, `durationMs`, `binary`, `txtPath`, optional `jsonPath` / `speakerLabelMode`, `version`, `versionLabel`) instead of plain text. |
 
+In the **local web UI** (`npm run ui`), the sidebar **Speakers** control maps to the same behaviour as `--transcribe-speakers`. If you still see a plain paragraph transcript (no `Speaker 1:` lines), check `whisper-cli --help`: it must list **`--tinydiarize`** (or `-tdrz`) and **`--output-json`** / **`--output-json-full`** (`-oj` / `-ojf`). Without those flags the app intentionally falls back to normal text; upgrade or rebuild whisper.cpp, then use a tinydiarize-capable GGML model when upstream docs require one.
+
 ### Per-chunk artifacts
 
 In `idle` mode each chunk produces:
