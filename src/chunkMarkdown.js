@@ -82,6 +82,19 @@ function buildHeading(wavBasename) {
   return `# Chunk ${ts.isoLocal}${suffix} (${stem})`;
 }
 
+function formatAcceleratorLabel(transcribe) {
+  // sidecar.transcribe is the GPU-2 sub-record. Returns a short human label
+  // ("GPU", "CPU", "GPU (N layers)") or null if no transcribe block is present.
+  if (!transcribe || typeof transcribe !== 'object') return null;
+  if (transcribe.gpu === true) {
+    return Number.isInteger(transcribe.gpuLayers) && transcribe.gpuLayers > 0
+      ? `GPU (${transcribe.gpuLayers} layers)`
+      : 'GPU';
+  }
+  if (transcribe.gpu === false) return 'CPU (forced)';
+  return null; // gpu == null means "whisper.cpp default" — not worth a line
+}
+
 function buildMetadataBlock(sidecar) {
   const lines = [];
   lines.push(`**Duration:** ${formatDurationSeconds(sidecar.durationMs)}`);
@@ -91,6 +104,8 @@ function buildMetadataBlock(sidecar) {
   }
   if (sidecar.start) lines.push(`**Start:** ${sidecar.start}`);
   if (sidecar.end) lines.push(`**End:**   ${sidecar.end}`);
+  const acc = formatAcceleratorLabel(sidecar.transcribe);
+  if (acc) lines.push(`**Accelerator:** ${acc}`);
   return lines.join('  \n'); // two-space line break (markdown soft break)
 }
 
@@ -185,5 +200,6 @@ module.exports = {
   formatNumberWithSeparator,
   formatDurationSeconds,
   formatPeak,
+  formatAcceleratorLabel,
   parseChunkTimestamp,
 };

@@ -290,7 +290,16 @@ That probe reports two independent things:
 1. Whether `nvidia-smi` finds a GPU (with name, VRAM, driver version).
 2. Whether the `whisper-cli` on PATH advertises GPU flags in its `--help` text (`--no-gpu`, `-ngl`, `cublas`, ...). A "yes" here strongly suggests but does not guarantee a cuBLAS build; the real proof shows up in GPU-5's benchmark and in whisper.cpp's own startup log line (`ggml_cuda_init: found N CUDA device(s)` on success, nothing on a CPU-only build).
 
-If both halves are positive, GPU acceleration is "available" and (once GPU-2 is shipped on this branch) will be used by default. Pass `--no-gpu` on `record`, `idle`, or `transcribe` to force CPU.
+If both halves are positive, GPU acceleration is available. Pass `--no-gpu` on `record`, `idle`, or `transcribe` to force CPU, or `--gpu-layers N` to control how many transformer layers are offloaded (whisper.cpp's `-ngl <N>`; default on a CUDA build is "all layers").
+
+What gets recorded:
+
+- The `transcribe --json` output gains `{ gpu, gpuLayers }` fields.
+- Each chunk's sidecar `.json` gains a `transcribe: { model, language, gpu, gpuLayers }` block (schema v2).
+- The per-chunk `.md` gains an `**Accelerator:** GPU (N layers)` or `**Accelerator:** CPU (forced)` line in the metadata block when GPU intent is set.
+- The persistent `whisper-server` logs `[whisper-server] ready (GPU)` / `(CPU)` / `(default)` at startup.
+
+Default (no flags) is unchanged: whisper.cpp's own build default decides, and the chunk artifacts look identical to v0.3.0.
 
 To actually install a CUDA-enabled whisper.cpp build on Windows: grab the cuBLAS release ZIP from <https://github.com/ggerganov/whisper.cpp/releases> (look for `whisper-bin-x64.cublas.zip` or similar) and put the folder containing `whisper-cli.exe` on your PATH. A future sprint (GPU-4) automates this via `npm run gpu:install`.
 

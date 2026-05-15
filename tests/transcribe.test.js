@@ -170,6 +170,57 @@ describe('buildWhisperArgs', () => {
   test('throws on missing wav', () => {
     expect(() => buildWhisperArgs({ model: 'm.bin' })).toThrow(/wav is required/);
   });
+
+  // GPU-2 ------------------------------------------------------------------
+  test('GPU-2: pushes --no-gpu when gpu === false', () => {
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', gpu: false }))
+      .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '--no-gpu', '-f', 'a.wav']);
+  });
+
+  test('GPU-2: pushes -ngl N when gpu === true and gpuLayers is a positive int', () => {
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', gpu: true, gpuLayers: 32 }))
+      .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '-ngl', '32', '-f', 'a.wav']);
+  });
+
+  test('GPU-2: omits -ngl when gpu === true but gpuLayers is null (CUDA build default kicks in)', () => {
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', gpu: true }))
+      .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '-f', 'a.wav']);
+  });
+
+  test('GPU-2: omits both flags when gpu == null (whisper.cpp own default)', () => {
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', gpu: null }))
+      .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '-f', 'a.wav']);
+  });
+
+  test('GPU-2: rejects non-positive gpuLayers (0, negative, non-integer) by omitting -ngl', () => {
+    const base = ['--no-prints', '--output-txt', '-m', 'm.bin', '-f', 'a.wav'];
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', gpu: true, gpuLayers: 0 })).toEqual(base);
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', gpu: true, gpuLayers: -1 })).toEqual(base);
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', gpu: true, gpuLayers: 12.5 })).toEqual(base);
+  });
+
+  test('GPU-2: --no-gpu wins over a stray gpuLayers (defensive: gpu===false suppresses -ngl)', () => {
+    // The CLI resolver rejects --no-gpu + --gpu-layers together, but this
+    // function's job is to honour the gpu tri-state strictly: false means CPU.
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', gpu: false, gpuLayers: 99 }))
+      .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '--no-gpu', '-f', 'a.wav']);
+  });
+
+  test('GPU-2: GPU flags sit between -t and --no-speech-thold for stable flag order', () => {
+    expect(buildWhisperArgs({
+      model: 'm.bin', wav: 'a.wav',
+      threads: 8, gpu: true, gpuLayers: 99,
+      noSpeechThreshold: 0.8, entropyThreshold: 2.8, language: 'zh',
+    })).toEqual([
+      '--no-prints', '--output-txt', '-m', 'm.bin',
+      '-t', '8',
+      '-ngl', '99',
+      '--no-speech-thold', '0.8',
+      '--entropy-thold', '2.8',
+      '-l', 'zh',
+      '-f', 'a.wav',
+    ]);
+  });
 });
 
 describe('resolveBinary', () => {
@@ -271,6 +322,56 @@ describe('transcribeFile', () => {
     const [actualBinary, actualArgs] = spawnFn.mock.calls[0];
     expect(actualBinary).toBe('whisper-cli');
     expect(actualArgs).toEqual(['--no-prints', '--output-txt', '-m', model, '-f', wav]);
+  });
+
+  test('GPU-2: forwards gpu: false as --no-gpu and echoes the choice in the result', async () => {
+    fs.writeFileSync(path.join(tmpdir, 'sample.txt'), 'cpu transcript\n');
+    const spawnFn = makeFakeSpawn({ exitCode: 0 });
+    const out = await transcribeFile({
+      wav,
+      model,
+      gpu: false,
+      binary: 'whisper-cli',
+      spawnFn,
+    });
+    const [, actualArgs] = spawnFn.mock.calls[0];
+    expect(actualArgs).toContain('--no-gpu');
+    expect(out.gpu).toBe(false);
+    expect(out.gpuLayers).toBeNull();
+  });
+
+  test('GPU-2: forwards gpu: true + gpuLayers as -ngl N and echoes both', async () => {
+    fs.writeFileSync(path.join(tmpdir, 'sample.txt'), 'gpu transcript\n');
+    const spawnFn = makeFakeSpawn({ exitCode: 0 });
+    const out = await transcribeFile({
+      wav,
+      model,
+      gpu: true,
+      gpuLayers: 99,
+      binary: 'whisper-cli',
+      spawnFn,
+    });
+    const [, actualArgs] = spawnFn.mock.calls[0];
+    expect(actualArgs).toContain('-ngl');
+    expect(actualArgs[actualArgs.indexOf('-ngl') + 1]).toBe('99');
+    expect(out.gpu).toBe(true);
+    expect(out.gpuLayers).toBe(99);
+  });
+
+  test('GPU-2: omits both GPU flags when gpu == null (whisper.cpp default)', async () => {
+    fs.writeFileSync(path.join(tmpdir, 'sample.txt'), 'default transcript\n');
+    const spawnFn = makeFakeSpawn({ exitCode: 0 });
+    const out = await transcribeFile({
+      wav,
+      model,
+      binary: 'whisper-cli',
+      spawnFn,
+    });
+    const [, actualArgs] = spawnFn.mock.calls[0];
+    expect(actualArgs).not.toContain('--no-gpu');
+    expect(actualArgs).not.toContain('-ngl');
+    expect(out.gpu).toBeNull();
+    expect(out.gpuLayers).toBeNull();
   });
 
   test('passes -l to whisper-cli when language is set', async () => {

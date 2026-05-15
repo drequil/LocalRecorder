@@ -40,8 +40,8 @@ function defaultChunkFilename(now = new Date(), suffix = '') {
 // filename convention the installed whisper-cli picked), and return the result.
 // Extracted so the constructor can fall back to it when the caller doesn't
 // inject a custom transcribeFn.
-async function defaultTranscribeRun({ wav, model, language, threads, noSpeechThreshold, entropyThreshold }, { transcribeFn = transcribeFile, fsImpl = fs } = {}) {
-  const result = await transcribeFn({ wav, model, language, threads, noSpeechThreshold, entropyThreshold });
+async function defaultTranscribeRun({ wav, model, language, threads, noSpeechThreshold, entropyThreshold, gpu, gpuLayers }, { transcribeFn = transcribeFile, fsImpl = fs } = {}) {
+  const result = await transcribeFn({ wav, model, language, threads, noSpeechThreshold, entropyThreshold, gpu, gpuLayers });
 
   // Apply hallucination filter.  If whisper.cpp produced text, strip any lines
   // that match known hallucination patterns (e.g. repeated "Thank you.").
@@ -242,6 +242,8 @@ class AudioRecorder {
       transcribeThreads = null,
       noSpeechThreshold = null,
       entropyThreshold = null,
+      gpu = null,
+      gpuLayers = null,
       useWhisperServer = true,
       transcribeFn,
       transcribeLogger = null,
@@ -299,6 +301,18 @@ class AudioRecorder {
     this.transcribeLanguage =
       transcribeLanguage != null && String(transcribeLanguage).trim() !== ''
         ? String(transcribeLanguage).trim()
+        : null;
+    // GPU-2: GPU acceleration intent. Tri-state:
+    //   true   -> push -ngl <N> when gpuLayers is set; else let whisper.cpp's
+    //             CUDA build offload all layers by default.
+    //   false  -> push --no-gpu (force CPU even on a CUDA build).
+    //   null   -> omit GPU flags entirely; whisper.cpp's own default decides.
+    // The chunk sidecar records this intent so each chunk is self-documenting
+    // about whether it was eligible for GPU offload.
+    this.gpu = gpu === true ? true : (gpu === false ? false : null);
+    this.gpuLayers =
+      this.gpu === true && Number.isInteger(gpuLayers) && gpuLayers > 0
+        ? gpuLayers
         : null;
     // T-5: peak gating threshold. Chunks whose sidecar peak < this are
     // marked 'skipped' with a stub .md and never enter the transcription
@@ -396,9 +410,16 @@ class AudioRecorder {
     }
     const server = new WhisperServer();
     const threads = this.transcribeThreads || Math.min(os.cpus().length, 8);
-    return server.start({ binary, model: this.transcribeModel, threads })
+    return server.start({
+      binary,
+      model: this.transcribeModel,
+      threads,
+      gpu: this.gpu,
+      gpuLayers: this.gpuLayers,
+    })
       .then(() => {
-        console.log(`[whisper-server] ready — model cached, per-chunk load overhead eliminated`);
+        const gpuLabel = this.gpu === false ? 'CPU' : (this.gpu === true ? 'GPU' : 'default');
+        console.log(`[whisper-server] ready (${gpuLabel}) — model cached, per-chunk load overhead eliminated`);
         return server;
       })
       .catch((err) => {
@@ -409,16 +430,20 @@ class AudioRecorder {
 
   // Transcription function used when a persistent whisper-server is available.
   // Falls back to the standard whisper-cli spawn if the server is not ready.
-  async _serverAwareTranscribe({ wav, model, language, threads, noSpeechThreshold, entropyThreshold }) {
+  async _serverAwareTranscribe({ wav, model, language, threads, noSpeechThreshold, entropyThreshold, gpu, gpuLayers }) {
     if (this._whisperServerPromise) {
       const server = await this._whisperServerPromise;
       if (server && server.ready) {
         trace('whisperServer', 'using server for chunk', { wav: path.basename(wav) });
+        // The persistent server was started with its own gpu/gpuLayers
+        // (passed via _startWhisperServerSilently); per-chunk overrides are
+        // not supported by whisper-server's HTTP API, so we ignore the job's
+        // gpu fields here. The CLI fallback below honours them.
         return server.transcribeToFile(wav, { language, noSpeechThreshold, entropyThreshold });
       }
     }
     trace('whisperServer', 'falling back to CLI for chunk', { wav: path.basename(wav) });
-    return transcribeFile({ wav, model, language, threads, noSpeechThreshold, entropyThreshold });
+    return transcribeFile({ wav, model, language, threads, noSpeechThreshold, entropyThreshold, gpu, gpuLayers });
   }
 
   // Wait for any in-flight or queued transcriptions to settle. Safe to call
@@ -493,6 +518,12 @@ class AudioRecorder {
             format: sidecar.format,
             peak: sidecar.peakAcc.peak,
             peakDb: sidecar.peakAcc.peakDb,
+            transcribe: this.transcribe ? {
+              model: this.transcribeModel,
+              language: this.transcribeLanguage,
+              gpu: this.gpu,
+              gpuLayers: this.gpuLayers,
+            } : null,
           });
           await fs.promises.writeFile(
             sidecarPathFor(filePath),
@@ -557,6 +588,8 @@ class AudioRecorder {
             wav: path.relative(process.cwd(), filePath),
             model: this.transcribeModel,
             language: this.transcribeLanguage,
+            gpu: this.gpu,
+            gpuLayers: this.gpuLayers,
           });
           this.transcribeQueue.enqueue({
             wav: filePath,
@@ -565,6 +598,8 @@ class AudioRecorder {
             threads: this.transcribeThreads,
             noSpeechThreshold: this.noSpeechThreshold,
             entropyThreshold: this.entropyThreshold,
+            gpu: this.gpu,
+            gpuLayers: this.gpuLayers,
           });
         }
       } else {

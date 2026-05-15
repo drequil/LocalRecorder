@@ -4,9 +4,9 @@
 // search index, heat-trend analyzer, human-review UI) can read this without
 // parsing a single byte of audio.
 //
-// Sidecar schema version 1:
+// Sidecar schema v2 (GPU-2):
 //   {
-//     "version": 1,
+//     "version": 2,
 //     "wav": "chunk-YYYYMMDD-HHMMSS-mmm.wav",
 //     "start": ISO8601 string,
 //     "end":   ISO8601 string,
@@ -14,13 +14,23 @@
 //     "audio": { sampleRate, channels, bitDepth, encoding },
 //     "peak":   number,   // normalized 0..1
 //     "peakDb": number,   // dBFS (-Infinity-floored at -120 by toDb)
-//     "bytes":  number    // size of the wav file on disk
+//     "bytes":  number,   // size of the wav file on disk
+//     "transcribe": {     // optional; present iff capture had transcribe enabled
+//       "model":    string,
+//       "language": string | null,
+//       "gpu":      true | false | null,  // capture-time intent (see audioRecorder)
+//       "gpuLayers": number | null        // -ngl <N> if set
+//     }
 //   }
+//
+// Backward compatibility: a v1 sidecar (no `transcribe` block) is still valid
+// and downstream readers should treat missing keys as "unknown". The schema
+// version bump signals to new code that the transcribe block may be present.
 
 const fs = require('fs');
 const path = require('path');
 
-const SIDECAR_SCHEMA_VERSION = 1;
+const SIDECAR_SCHEMA_VERSION = 2;
 const BYTES_PER_INT16_SAMPLE = 2;
 
 function sidecarPathFor(wavPath) {
@@ -48,6 +58,7 @@ function buildSidecar({
   format,
   peak,
   peakDb,
+  transcribe = null,
 }) {
   const audio = {
     sampleRate: format.sampleRate,
@@ -55,7 +66,7 @@ function buildSidecar({
     bitDepth: format.bitDepth,
     encoding: format.encoding,
   };
-  return {
+  const out = {
     version: SIDECAR_SCHEMA_VERSION,
     wav: path.basename(wavPath),
     start: start instanceof Date ? start.toISOString() : start,
@@ -72,6 +83,24 @@ function buildSidecar({
     peakDb,
     bytes: fileSize,
   };
+  if (transcribe && typeof transcribe === 'object') {
+    // Normalise the GPU tri-state so consumers can rely on the exact JSON
+    // shape (true / false / null) without re-coercing.
+    const gpu = transcribe.gpu === true ? true : (transcribe.gpu === false ? false : null);
+    const gpuLayers =
+      gpu === true && Number.isInteger(transcribe.gpuLayers) && transcribe.gpuLayers > 0
+        ? transcribe.gpuLayers
+        : null;
+    out.transcribe = {
+      model: transcribe.model != null ? String(transcribe.model) : null,
+      language: transcribe.language != null && String(transcribe.language).trim() !== ''
+        ? String(transcribe.language).trim()
+        : null,
+      gpu,
+      gpuLayers,
+    };
+  }
+  return out;
 }
 
 function writeSidecar(wavPath, sidecar) {

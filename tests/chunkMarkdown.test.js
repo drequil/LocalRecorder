@@ -4,6 +4,7 @@ const {
   formatNumberWithSeparator,
   formatDurationSeconds,
   formatPeak,
+  formatAcceleratorLabel,
   parseChunkTimestamp,
 } = require('../src/chunkMarkdown');
 
@@ -238,6 +239,75 @@ describe('formatChunkMarkdown (failure / empty / pending paths)', () => {
       txtBasename: 'chunk-20260512-162301-489.txt',
     });
     expect(md).toContain('[chunk-20260512-162301-489.txt](chunk-20260512-162301-489.txt)');
+  });
+});
+
+describe('formatAcceleratorLabel (GPU-2)', () => {
+  test('returns "GPU" when gpu: true with no layer override', () => {
+    expect(formatAcceleratorLabel({ gpu: true })).toBe('GPU');
+  });
+
+  test('returns "GPU (N layers)" when gpuLayers is set', () => {
+    expect(formatAcceleratorLabel({ gpu: true, gpuLayers: 32 })).toBe('GPU (32 layers)');
+  });
+
+  test('returns "CPU (forced)" when gpu: false', () => {
+    expect(formatAcceleratorLabel({ gpu: false })).toBe('CPU (forced)');
+  });
+
+  test('returns null when no transcribe block', () => {
+    expect(formatAcceleratorLabel(null)).toBeNull();
+    expect(formatAcceleratorLabel(undefined)).toBeNull();
+    expect(formatAcceleratorLabel('not-an-object')).toBeNull();
+  });
+
+  test('returns null when gpu is the tri-state "let whisper decide" (null)', () => {
+    expect(formatAcceleratorLabel({ gpu: null })).toBeNull();
+    expect(formatAcceleratorLabel({})).toBeNull();
+  });
+});
+
+describe('formatChunkMarkdown (GPU-2 accelerator line)', () => {
+  test('adds an **Accelerator:** line when sidecar.transcribe.gpu is true', () => {
+    const md = formatChunkMarkdown({
+      sidecar: sampleSidecar({
+        transcribe: { model: 'm.bin', language: null, gpu: true, gpuLayers: 32 },
+      }),
+      transcribeStatus: 'ok',
+      transcript: 'hi',
+    });
+    expect(md).toContain('**Accelerator:** GPU (32 layers)');
+  });
+
+  test('shows "CPU (forced)" when --no-gpu was set', () => {
+    const md = formatChunkMarkdown({
+      sidecar: sampleSidecar({
+        transcribe: { model: 'm.bin', language: null, gpu: false, gpuLayers: null },
+      }),
+      transcribeStatus: 'ok',
+      transcript: 'hi',
+    });
+    expect(md).toContain('**Accelerator:** CPU (forced)');
+  });
+
+  test('omits the accelerator line when the sidecar has no transcribe block', () => {
+    const md = formatChunkMarkdown({
+      sidecar: sampleSidecar(),
+      transcribeStatus: 'ok',
+      transcript: 'hi',
+    });
+    expect(md).not.toContain('**Accelerator:**');
+  });
+
+  test('omits the accelerator line when gpu is null ("whisper.cpp default")', () => {
+    const md = formatChunkMarkdown({
+      sidecar: sampleSidecar({
+        transcribe: { model: 'm.bin', language: null, gpu: null, gpuLayers: null },
+      }),
+      transcribeStatus: 'ok',
+      transcript: 'hi',
+    });
+    expect(md).not.toContain('**Accelerator:**');
   });
 });
 

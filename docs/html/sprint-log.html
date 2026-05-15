@@ -981,6 +981,46 @@ Then re-run: npm run transcribe:check
 </li>
 <li>Why: GPU-1 is the smallest useful step. It lets the user run <code>npm run gpu:check</code>, see whether their hardware + binary support GPU transcription, and surfaces the exact failure mode if not. The rest of <code>feature/gpu-acceleration</code> (flag plumbing, UI badge, auto-installer, benchmark) builds on top of this single probe</li>
 </ul>
+<h2>Sprint GPU-2: v0.4.0 (Completed)</h2>
+<ul>
+<li>Plumbed the GPU intent through every layer of the transcription pipeline so a user with a CUDA-built whisper.cpp can opt in, opt out, or tune layer offload from the CLI without any code changes downstream. Default behaviour is unchanged: omit both flags, let whisper.cpp&#39;s own build default decide</li>
+<li>Tri-state semantics adopted everywhere (CLI parser, AudioRecorder, transcribe.js, whisperServer.js, sidecar, chunk-markdown):<ul>
+<li><code>gpu: false</code> -&gt; emit <code>--no-gpu</code> (hard CPU override; works on any build that surfaces the flag)</li>
+<li><code>gpu: true</code> + <code>gpuLayers: N</code> -&gt; emit <code>-ngl N</code> (whisper.cpp&#39;s <code>-ngl &lt;N&gt;</code> controls how many transformer layers go on the GPU; on a CUDA build, the default is &quot;all&quot;)</li>
+<li><code>gpu: true</code> with no layer count -&gt; emit nothing; CUDA build defaults to all layers</li>
+<li><code>gpu: null</code> -&gt; emit nothing; preserves today&#39;s CPU-only baseline behaviour</li>
+</ul>
+</li>
+<li>Files modified:<ul>
+<li><code>src/transcribe.js</code> -- <code>buildWhisperArgs({ gpu, gpuLayers })</code> and <code>transcribeFile({ gpu, gpuLayers })</code>. Flag insertion sits between <code>-t N</code> and <code>--no-speech-thold</code> to keep argv stable + easy to eyeball in trace. The returned result object carries <code>gpu</code>/<code>gpuLayers</code> so the caller can echo intent (whisper.cpp doesn&#39;t echo back whether it actually used the GPU; runtime ground-truth is whisper.cpp&#39;s own startup log line <code>ggml_cuda_init: found 1 CUDA device</code> which GPU-5&#39;s bench tool will surface)</li>
+<li><code>src/whisperServer.js</code> -- new pure helper <code>buildServerArgs({ model, threads, port, gpu, gpuLayers })</code> for testability, plus <code>start({ ..., gpu, gpuLayers, spawnFn, waitForPortFn })</code> which now records <code>ws.gpu</code> / <code>ws.gpuLayers</code> on the instance and accepts injected spawn/waitForPort for tests (mirrors how <code>transcribeFile</code> was already factored). The <code>[whisper-server] ready</code> log line now says <code>(GPU)</code> / <code>(CPU)</code> / <code>(default)</code> so a quick <code>npm run ui</code> makes the choice obvious</li>
+<li><code>src/audioRecorder.js</code> -- constructor accepts <code>gpu</code> / <code>gpuLayers</code> and normalises them once at construction time; threads them through <code>_startWhisperServerSilently()</code> (persistent server path), <code>_serverAwareTranscribe()</code> (per-chunk CLI fallback), and the queue worker job payload. The persistent server can&#39;t change <code>-ngl</code> per chunk, so the server is started with the recorder-level intent and chunk-level overrides are honoured only in the CLI fallback path (documented inline)</li>
+<li><code>src/chunkSidecar.js</code> -- schema bumped 1 -&gt; 2. New optional <code>transcribe</code> block records <code>{ model, language, gpu, gpuLayers }</code> for each chunk so the on-disk artifact is self-documenting about whether the chunk was eligible for GPU offload. Sidecars without a <code>transcribe</code> block are still valid (back-compat)</li>
+<li><code>src/chunkMarkdown.js</code> -- new <code>formatAcceleratorLabel(sidecar.transcribe)</code> helper. The per-chunk <code>.md</code> gains an <code>**Accelerator:** GPU (32 layers)</code> (or <code>CPU (forced)</code>) line in the metadata block when the sidecar declares a GPU intent; omitted when the intent is <code>null</code> (the today&#39;s-default case) so existing CPU-only sessions look identical to before</li>
+<li><code>src/index.js</code> -- new CLI flags <code>--no-gpu</code> and <code>--gpu-layers N</code> on record / chunk / idle / transcribe; new <code>resolveGpuFlags({ noGpu, gpuLayers })</code> helper collapses them into the tri-state and rejects <code>--no-gpu --gpu-layers N</code> as mutually exclusive. Help text + <code>transcribe --json</code> output were extended</li>
+</ul>
+</li>
+<li>Files added:<ul>
+<li><code>tests/resolveGpuFlags.test.js</code> -- 5 tests pinning the helper&#39;s behaviour (null, --no-gpu, --gpu-layers, mutual exclusion, defensive rejection of bad layer counts)</li>
+</ul>
+</li>
+<li>Files modified (tests):<ul>
+<li><code>tests/transcribe.test.js</code> -- 7 new <code>buildWhisperArgs</code> GPU branches + 3 new <code>transcribeFile</code> GPU smoke tests (argv shape, result fields)</li>
+<li><code>tests/whisperServer.test.js</code> -- 5 new <code>buildServerArgs</code> tests + 2 end-to-end <code>start()</code> smoke tests using injected <code>spawnFn</code>/<code>waitForPortFn</code> fakes, plus an integration test confirming <code>AudioRecorder</code> threads gpu/gpuLayers into the whisper-server startup</li>
+<li><code>tests/chunkSidecar.test.js</code> -- 4 new tests for the v2 <code>transcribe</code> block (presence, absence, normalisation, gpu===false zeroes layers)</li>
+<li><code>tests/chunkMarkdown.test.js</code> -- 5 new tests for <code>formatAcceleratorLabel</code> + 4 integration tests for the new <code>**Accelerator:**</code> metadata line</li>
+<li><code>tests/parseRecordArgs.test.js</code>, <code>tests/parseIdleArgs.test.js</code>, <code>tests/parseTranscribeArgs.test.js</code> -- shape updated to include <code>noGpu</code> / <code>gpuLayers</code> defaults; new positive-and-negative parsing tests for <code>--no-gpu</code> and <code>--gpu-layers N</code></li>
+</ul>
+</li>
+<li>Validation: <code>npm test</code> -- <strong>500/500 passing across 27 suites</strong> (+46 new). No lint errors on any modified file. <code>node --check</code> clean across the six modified <code>src/</code> modules. Help text manually re-read for the new flag descriptions</li>
+<li>Known limitations:<ul>
+<li><strong>The persistent whisper-server can&#39;t change <code>-ngl</code> per chunk.</strong> It&#39;s a process-level decision. <code>_serverAwareTranscribe</code> documents this explicitly: the server is started with the recorder-level GPU intent, and per-chunk job-payload GPU fields are honoured only when we fall back to the per-chunk CLI path</li>
+<li><strong>whisper.cpp doesn&#39;t echo &quot;did it actually use the GPU&quot; in its result.</strong> Our result + sidecar capture the <em>intent</em>. The <em>fact</em> shows up in whisper.cpp&#39;s own stderr (&quot;ggml_cuda_init: ...&quot;) which we already pipe to <code>trace(&#39;whisperServer&#39;, &#39;stderr&#39;, ...)</code> but don&#39;t parse. GPU-5&#39;s benchmark will read this from actual run output to give a ground-truth answer</li>
+<li><strong><code>-ngl</code> interpretation on whisper-server.</strong> The HTTP API doesn&#39;t accept <code>-ngl</code>; it&#39;s a process-start flag only. Same limitation as above; documented in code</li>
+</ul>
+</li>
+<li>Why: GPU-1 told the user whether their hardware was capable. GPU-2 lets them actually use it. Default behaviour is unchanged, every change is opt-in via a clearly-documented CLI flag, and every chunk&#39;s on-disk artifacts now record which accelerator was requested so a later review session knows which sessions were CPU vs. GPU</li>
+</ul>
 
 </body>
 </html>

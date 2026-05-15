@@ -42,6 +42,21 @@ const INFERENCE_TIMEOUT_MS = 300_000;
 // Internals
 // ---------------------------------------------------------------------------
 
+// Pure: shape the argv we hand to whisper-server's spawn. Extracted so tests
+// can pin the exact flag order without spawning. The contract matches
+// buildWhisperArgs() in src/transcribe.js for GPU semantics so callers can
+// reason about the persistent-server and per-chunk-CLI paths interchangeably.
+function buildServerArgs({ model, threads, port, gpu = null, gpuLayers = null }) {
+  const args = ['-m', model, '-t', String(threads)];
+  if (gpu === false) {
+    args.push('--no-gpu');
+  } else if (gpu === true && Number.isInteger(gpuLayers) && gpuLayers > 0) {
+    args.push('-ngl', String(gpuLayers));
+  }
+  args.push('--port', String(port), '--host', '127.0.0.1');
+  return args;
+}
+
 function probeServerBinary(candidates) {
   for (const name of candidates) {
     try {
@@ -172,26 +187,37 @@ class WhisperServer {
 
   // Spawn whisper-server with the given model, wait until the HTTP port
   // accepts connections, then set this.ready = true.
-  async start({ binary, model, threads = 4 }) {
+  //
+  // GPU semantics mirror buildWhisperArgs() in src/transcribe.js so the
+  // persistent-server path and the per-chunk CLI path stay in lockstep:
+  //   gpu === false      → --no-gpu (force CPU)
+  //   gpu === true       → -ngl <N> when gpuLayers is a positive int; else omit
+  //   gpu == null        → omit; let whisper.cpp's build default decide
+  //
+  // spawnFn / waitForPortFn are injectable for tests so the suite can pin the
+  // exact argv without actually starting a server.
+  async start({ binary, model, threads = 4, gpu = null, gpuLayers = null, spawnFn = spawn, waitForPortFn = waitForPort }) {
     if (this.ready) throw new Error('WhisperServer: already started');
 
     this.port = await findFreePort();
 
-    const args = [
-      '-m', model,
-      '-t', String(threads),
-      '--port', String(this.port),
-      '--host', '127.0.0.1',
-    ];
+    const args = buildServerArgs({ model, threads, port: this.port, gpu, gpuLayers });
+
+    // Record the configured GPU intent so consumers (UI, sidecar, bench) can
+    // report the choice without re-parsing argv.
+    this.gpu = gpu === true ? true : (gpu === false ? false : null);
+    this.gpuLayers = gpu === true && Number.isInteger(gpuLayers) && gpuLayers > 0 ? gpuLayers : null;
 
     trace('whisperServer', 'spawning', {
       binary,
       model: path.basename(model),
       threads,
+      gpu: this.gpu,
+      gpuLayers: this.gpuLayers,
       port: this.port,
     });
 
-    this.proc = spawn(binary, args, {
+    this.proc = spawnFn(binary, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -204,7 +230,7 @@ class WhisperServer {
       this.ready = false;
     });
 
-    const ok = await waitForPort(this.port, SERVER_READY_TIMEOUT_MS);
+    const ok = await waitForPortFn(this.port, SERVER_READY_TIMEOUT_MS);
     if (!ok) {
       this.stop();
       throw new Error(
@@ -269,6 +295,7 @@ class WhisperServer {
 module.exports = {
   WhisperServer,
   WHISPER_SERVER_CANDIDATES,
+  buildServerArgs,
   // Exported for testing:
-  _internal: { probeServerBinary, buildMultipart, waitForPort },
+  _internal: { probeServerBinary, buildMultipart, waitForPort, buildServerArgs },
 };

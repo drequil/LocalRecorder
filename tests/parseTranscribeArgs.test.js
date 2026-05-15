@@ -10,6 +10,8 @@ function expectShape(overrides = {}) {
     transcribeThreads: null,
     noSpeechThreshold: null,
     entropyThreshold: null,
+    noGpu: false,
+    gpuLayers: null,
     json: false,
     ...overrides,
   };
@@ -128,5 +130,16 @@ describe('parseTranscribeArgs', () => {
 
   test('rejects --medium with --large', () => {
     expect(parseTranscribeArgs(['a.wav', '--medium', '--large']).error).toMatch(/cannot use --medium together/);
+  });
+
+  // GPU-2 ------------------------------------------------------------------
+  test('parses --no-gpu', () => {
+    expect(parseTranscribeArgs(['a.wav', '--no-gpu']))
+      .toEqual(expectShape({ wav: 'a.wav', noGpu: true }));
+  });
+
+  test('parses --gpu-layers N', () => {
+    expect(parseTranscribeArgs(['a.wav', '--gpu-layers', '99']))
+      .toEqual(expectShape({ wav: 'a.wav', gpuLayers: 99 }));
   });
 });

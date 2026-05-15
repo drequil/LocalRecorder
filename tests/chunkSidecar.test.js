@@ -91,6 +91,63 @@ describe('buildSidecar', () => {
     expect(result.start).toBe('2026-01-01T00:00:00.000Z');
     expect(result.end).toBe('2026-01-01T00:00:01.000Z');
   });
+
+  // GPU-2 ------------------------------------------------------------------
+  test('GPU-2: schema is bumped to v2', () => {
+    expect(SIDECAR_SCHEMA_VERSION).toBe(2);
+  });
+
+  test('GPU-2: omits the transcribe block when no transcribe arg is passed', () => {
+    const result = buildSidecar({
+      wavPath: '/tmp/x.wav',
+      start: '2026-01-01T00:00:00.000Z',
+      end: '2026-01-01T00:00:01.000Z',
+      fileSize: 100, dataPayloadOffset: 44,
+      format: { sampleRate: 16000, channels: 1, bitDepth: 16, encoding: 'signed-integer' },
+      peak: 0, peakDb: -120,
+    });
+    expect(result.transcribe).toBeUndefined();
+  });
+
+  test('GPU-2: includes the transcribe block when capture intent is supplied', () => {
+    const result = buildSidecar({
+      wavPath: '/tmp/x.wav',
+      start: '2026-01-01T00:00:00.000Z',
+      end: '2026-01-01T00:00:01.000Z',
+      fileSize: 100, dataPayloadOffset: 44,
+      format: { sampleRate: 16000, channels: 1, bitDepth: 16, encoding: 'signed-integer' },
+      peak: 0, peakDb: -120,
+      transcribe: { model: 'models/ggml-large-v3.bin', language: 'en', gpu: true, gpuLayers: 32 },
+    });
+    expect(result.transcribe).toEqual({
+      model: 'models/ggml-large-v3.bin',
+      language: 'en',
+      gpu: true,
+      gpuLayers: 32,
+    });
+  });
+
+  test('GPU-2: normalises tri-state and rejects bad gpuLayers', () => {
+    const r1 = buildSidecar({
+      wavPath: '/tmp/x.wav', start: 's', end: 'e',
+      fileSize: 100, dataPayloadOffset: 44,
+      format: { sampleRate: 16000, channels: 1, bitDepth: 16, encoding: 'signed-integer' },
+      peak: 0, peakDb: 0,
+      transcribe: { model: 'm.bin', language: null, gpu: 'yes', gpuLayers: 'lots' },
+    });
+    // Anything that isn't strictly true/false collapses to null; bad layers cleared.
+    expect(r1.transcribe).toEqual({ model: 'm.bin', language: null, gpu: null, gpuLayers: null });
+
+    const r2 = buildSidecar({
+      wavPath: '/tmp/x.wav', start: 's', end: 'e',
+      fileSize: 100, dataPayloadOffset: 44,
+      format: { sampleRate: 16000, channels: 1, bitDepth: 16, encoding: 'signed-integer' },
+      peak: 0, peakDb: 0,
+      transcribe: { model: 'm.bin', language: '  ', gpu: false, gpuLayers: 32 },
+    });
+    // gpu: false → layers always null regardless of input.
+    expect(r2.transcribe).toEqual({ model: 'm.bin', language: null, gpu: false, gpuLayers: null });
+  });
 });
 
 describe('writeSidecar (real fs round-trip)', () => {

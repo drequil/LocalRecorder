@@ -19,6 +19,8 @@ function expectShape(overrides = {}) {
     noSpeechThreshold: null,
     entropyThreshold: null,
     noWhisperServer: false,
+    noGpu: false,
+    gpuLayers: null,
     trace: false,
     ...overrides,
   };
@@ -133,5 +135,23 @@ describe('parseRecordArgs', () => {
 
   test('rejects --medium with --large', () => {
     expect(parseRecordArgs(['--medium', '--large']).error).toMatch(/cannot use --medium together/);
+  });
+
+  // GPU-2 ------------------------------------------------------------------
+  test('parses --no-gpu', () => {
+    expect(parseRecordArgs(['--no-gpu', '--duration', '1'])).toEqual(
+      expectShape({ noGpu: true, durationSeconds: 1 }),
+    );
+  });
+
+  test('parses --gpu-layers N', () => {
+    expect(parseRecordArgs(['--gpu-layers', '32', '--duration', '1'])).toEqual(
+      expectShape({ gpuLayers: 32, durationSeconds: 1 }),
+    );
+  });
+
+  test('rejects --gpu-layers with non-positive numbers', () => {
+    expect(parseRecordArgs(['--gpu-layers', '0']).error).toMatch(/positive number/);
+    expect(parseRecordArgs(['--gpu-layers', '-1']).error).toMatch(/positive number/);
   });
 });

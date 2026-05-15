@@ -182,6 +182,22 @@ function resolveEntropyThreshold(cliValue) {
   return WHISPER_ENTROPY_DEFAULT;
 }
 
+// GPU-2: collapse the CLI surface (--no-gpu flag, --gpu-layers N) into the
+// tri-state {gpu, gpuLayers} the rest of the pipeline expects. Returns:
+//   { gpu: false, gpuLayers: null }      when --no-gpu is set (hard CPU)
+//   { gpu: true,  gpuLayers: N }         when --gpu-layers N is set
+//   { gpu: null,  gpuLayers: null }      otherwise (let whisper.cpp decide)
+// Mutually-exclusive flags are rejected here so the parsed-args layer stays
+// dumb and only this one helper owns the rule.
+function resolveGpuFlags({ noGpu, gpuLayers } = {}) {
+  if (noGpu === true && gpuLayers != null) {
+    return { error: 'cannot use --no-gpu together with --gpu-layers' };
+  }
+  if (noGpu === true) return { gpu: false, gpuLayers: null };
+  if (Number.isInteger(gpuLayers) && gpuLayers > 0) return { gpu: true, gpuLayers };
+  return { gpu: null, gpuLayers: null };
+}
+
 const RECORD_FLAGS = {
   '--duration': { type: 'positiveNumber', as: 'durationSeconds' },
   '--duration-minutes': { type: 'positiveNumber', as: 'durationMinutes' },
@@ -201,6 +217,12 @@ const RECORD_FLAGS = {
   '--no-speech-thold': { type: 'positiveNumber', as: 'noSpeechThreshold' },
   '--entropy-thold': { type: 'positiveNumber', as: 'entropyThreshold' },
   '--no-whisper-server': { type: 'flag', as: 'noWhisperServer' },
+  // GPU-2: GPU acceleration controls. Defaults: omit both flags ⇒ whisper.cpp's
+  // own build default decides (CUDA build → GPU; CPU-only build → CPU).
+  // --no-gpu hard-forces CPU even on a CUDA build.
+  // --gpu-layers N is only meaningful on a CUDA build; ignored otherwise.
+  '--no-gpu': { type: 'flag', as: 'noGpu' },
+  '--gpu-layers': { type: 'positiveNumber', as: 'gpuLayers' },
   '--trace': { type: 'flag', as: 'trace' },
 };
 
@@ -231,6 +253,8 @@ const IDLE_FLAGS = {
   '--no-speech-thold': { type: 'positiveNumber', as: 'noSpeechThreshold' },
   '--entropy-thold': { type: 'positiveNumber', as: 'entropyThreshold' },
   '--no-whisper-server': { type: 'flag', as: 'noWhisperServer' },
+  '--no-gpu': { type: 'flag', as: 'noGpu' },
+  '--gpu-layers': { type: 'positiveNumber', as: 'gpuLayers' },
   '--trace': { type: 'flag', as: 'trace' },
 };
 
@@ -247,6 +271,8 @@ const TRANSCRIBE_FLAGS = {
   '--threads': { type: 'positiveNumber', as: 'transcribeThreads' },
   '--no-speech-thold': { type: 'positiveNumber', as: 'noSpeechThreshold' },
   '--entropy-thold': { type: 'positiveNumber', as: 'entropyThreshold' },
+  '--no-gpu': { type: 'flag', as: 'noGpu' },
+  '--gpu-layers': { type: 'positiveNumber', as: 'gpuLayers' },
   '--json': { type: 'flag', as: 'json' },
 };
 
@@ -307,6 +333,8 @@ function printHelp() {
   console.log('  --no-speech-thold P     Drop segments whisper rates as non-speech above P (default 0.8; whisper default 0.6)');
   console.log('  --entropy-thold P       Drop uncertain segments above entropy P (default 2.8; whisper default 2.4)');
   console.log('  --no-whisper-server     Disable persistent whisper-server; spawn whisper-cli per chunk instead');
+  console.log('  --no-gpu                Force CPU even on a CUDA build (pushes --no-gpu to whisper.cpp)');
+  console.log('  --gpu-layers N          Offload N transformer layers to the GPU (-ngl). Omit → whisper.cpp default (all layers on CUDA build)');
   console.log('  --trace                 Verbose stderr traces (also LOCALRECORDER_TRACE=1)');
   console.log('  --json                  Emit transcribe result as JSON instead of plain text');
 }
@@ -341,6 +369,8 @@ function parseRecordArgs(args) {
     noSpeechThreshold: flags.noSpeechThreshold != null ? flags.noSpeechThreshold : null,
     entropyThreshold: flags.entropyThreshold != null ? flags.entropyThreshold : null,
     noWhisperServer: flags.noWhisperServer === true,
+    noGpu: flags.noGpu === true,
+    gpuLayers: flags.gpuLayers != null ? flags.gpuLayers : null,
     trace: flags.trace === true,
   };
 }
@@ -374,6 +404,8 @@ function parseIdleArgs(args) {
     noSpeechThreshold: flags.noSpeechThreshold != null ? flags.noSpeechThreshold : null,
     entropyThreshold: flags.entropyThreshold != null ? flags.entropyThreshold : null,
     noWhisperServer: flags.noWhisperServer === true,
+    noGpu: flags.noGpu === true,
+    gpuLayers: flags.gpuLayers != null ? flags.gpuLayers : null,
     trace: flags.trace === true,
   };
 }
@@ -405,6 +437,8 @@ function parseTranscribeArgs(args) {
     transcribeThreads: flags.transcribeThreads != null ? flags.transcribeThreads : null,
     noSpeechThreshold: flags.noSpeechThreshold != null ? flags.noSpeechThreshold : null,
     entropyThreshold: flags.entropyThreshold != null ? flags.entropyThreshold : null,
+    noGpu: flags.noGpu === true,
+    gpuLayers: flags.gpuLayers != null ? flags.gpuLayers : null,
     json: flags.json === true,
   };
 }
@@ -536,11 +570,16 @@ async function runTranscribe(args = []) {
   const threads = resolveTranscribeThreads(parsed.transcribeThreads);
   const noSpeechThreshold = resolveNoSpeechThreshold(parsed.noSpeechThreshold);
   const entropyThreshold = resolveEntropyThreshold(parsed.entropyThreshold);
-  trace('transcribe-cli', 'one-shot transcribe', { wav: parsed.wav, model, language: language || null, threads, noSpeechThreshold, entropyThreshold });
+  const gpuFlags = resolveGpuFlags({ noGpu: parsed.noGpu, gpuLayers: parsed.gpuLayers });
+  if (gpuFlags.error) {
+    console.error(`Error: ${gpuFlags.error}`);
+    return 1;
+  }
+  trace('transcribe-cli', 'one-shot transcribe', { wav: parsed.wav, model, language: language || null, threads, noSpeechThreshold, entropyThreshold, gpu: gpuFlags.gpu, gpuLayers: gpuFlags.gpuLayers });
 
   let result;
   try {
-    result = await transcribeFile({ wav: parsed.wav, model, language, threads, noSpeechThreshold, entropyThreshold });
+    result = await transcribeFile({ wav: parsed.wav, model, language, threads, noSpeechThreshold, entropyThreshold, gpu: gpuFlags.gpu, gpuLayers: gpuFlags.gpuLayers });
   } catch (err) {
     console.error(`Error: ${err.message}`);
     if (err.stderr) {
@@ -562,6 +601,8 @@ async function runTranscribe(args = []) {
       txtPath: result.txtPath,
       version: versionInfo && versionInfo.version ? versionInfo.version : null,
       versionLabel: versionInfo ? versionInfo.label : null,
+      gpu: result.gpu,
+      gpuLayers: result.gpuLayers,
     };
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   } else {
@@ -683,6 +724,11 @@ async function main(argv) {
     recordTarget = resolved.filePath;
     sessionDir = resolved.sessionDir;
     durationSeconds = parsed.durationSeconds ?? RECORD_SAFETY_MAX_SECONDS;
+    const gpuFlags = resolveGpuFlags({ noGpu: parsed.noGpu, gpuLayers: parsed.gpuLayers });
+    if (gpuFlags.error) {
+      console.error(`Error: ${gpuFlags.error}`);
+      return 1;
+    }
     recorderOptions = compactOptions({
       device: parsed.device,
       transcribe: parsed.transcribe,
@@ -694,6 +740,8 @@ async function main(argv) {
       noSpeechThreshold: resolveNoSpeechThreshold(parsed.noSpeechThreshold),
       entropyThreshold: resolveEntropyThreshold(parsed.entropyThreshold),
       useWhisperServer: !parsed.noWhisperServer,
+      gpu: gpuFlags.gpu,
+      gpuLayers: gpuFlags.gpuLayers,
     });
   } else {
     let parsed = parseIdleArgs(tail);
@@ -741,6 +789,11 @@ async function main(argv) {
     sessionDir = resolved.sessionDir;
     durationSeconds = parsed.durationSeconds;
     const chunkKnobs = resolveIdleChunkKnobs(parsed);
+    const gpuFlags = resolveGpuFlags({ noGpu: parsed.noGpu, gpuLayers: parsed.gpuLayers });
+    if (gpuFlags.error) {
+      console.error(`Error: ${gpuFlags.error}`);
+      return 1;
+    }
     recorderOptions = compactOptions({
       device: parsed.device,
       idleThreshold: parsed.idleThreshold,
@@ -755,6 +808,8 @@ async function main(argv) {
       noSpeechThreshold: resolveNoSpeechThreshold(parsed.noSpeechThreshold),
       entropyThreshold: resolveEntropyThreshold(parsed.entropyThreshold),
       useWhisperServer: !parsed.noWhisperServer,
+      gpu: gpuFlags.gpu,
+      gpuLayers: gpuFlags.gpuLayers,
     });
   }
 
@@ -880,6 +935,7 @@ module.exports = {
   resolveTranscribeThreads,
   resolveNoSpeechThreshold,
   resolveEntropyThreshold,
+  resolveGpuFlags,
   WHISPER_MAX_AUTO_THREADS,
   WHISPER_NO_SPEECH_DEFAULT,
   WHISPER_ENTROPY_DEFAULT,

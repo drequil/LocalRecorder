@@ -379,7 +379,15 @@ default), step up to a bigger model -- see the table below.</p>
 <li>Whether <code>nvidia-smi</code> finds a GPU (with name, VRAM, driver version).</li>
 <li>Whether the <code>whisper-cli</code> on PATH advertises GPU flags in its <code>--help</code> text (<code>--no-gpu</code>, <code>-ngl</code>, <code>cublas</code>, ...). A &quot;yes&quot; here strongly suggests but does not guarantee a cuBLAS build; the real proof shows up in GPU-5&#39;s benchmark and in whisper.cpp&#39;s own startup log line (<code>ggml_cuda_init: found N CUDA device(s)</code> on success, nothing on a CPU-only build).</li>
 </ol>
-<p>If both halves are positive, GPU acceleration is &quot;available&quot; and (once GPU-2 is shipped on this branch) will be used by default. Pass <code>--no-gpu</code> on <code>record</code>, <code>idle</code>, or <code>transcribe</code> to force CPU.</p>
+<p>If both halves are positive, GPU acceleration is available. Pass <code>--no-gpu</code> on <code>record</code>, <code>idle</code>, or <code>transcribe</code> to force CPU, or <code>--gpu-layers N</code> to control how many transformer layers are offloaded (whisper.cpp&#39;s <code>-ngl &lt;N&gt;</code>; default on a CUDA build is &quot;all layers&quot;).</p>
+<p>What gets recorded:</p>
+<ul>
+<li>The <code>transcribe --json</code> output gains <code>{ gpu, gpuLayers }</code> fields.</li>
+<li>Each chunk&#39;s sidecar <code>.json</code> gains a <code>transcribe: { model, language, gpu, gpuLayers }</code> block (schema v2).</li>
+<li>The per-chunk <code>.md</code> gains an <code>**Accelerator:** GPU (N layers)</code> or <code>**Accelerator:** CPU (forced)</code> line in the metadata block when GPU intent is set.</li>
+<li>The persistent <code>whisper-server</code> logs <code>[whisper-server] ready (GPU)</code> / <code>(CPU)</code> / <code>(default)</code> at startup.</li>
+</ul>
+<p>Default (no flags) is unchanged: whisper.cpp&#39;s own build default decides, and the chunk artifacts look identical to v0.3.0.</p>
 <p>To actually install a CUDA-enabled whisper.cpp build on Windows: grab the cuBLAS release ZIP from <a href="https://github.com/ggerganov/whisper.cpp/releases">https://github.com/ggerganov/whisper.cpp/releases</a> (look for <code>whisper-bin-x64.cublas.zip</code> or similar) and put the folder containing <code>whisper-cli.exe</code> on your PATH. A future sprint (GPU-4) automates this via <code>npm run gpu:install</code>.</p>
 <h3>Model trade-offs</h3>
 <p><code>whisper.cpp</code> ships multiple ggml models. Bigger = better accuracy but

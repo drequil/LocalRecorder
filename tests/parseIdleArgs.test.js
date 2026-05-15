@@ -21,6 +21,8 @@ function expectIdleShape(overrides = {}) {
     noSpeechThreshold: null,
     entropyThreshold: null,
     noWhisperServer: false,
+    noGpu: false,
+    gpuLayers: null,
     trace: false,
     ...overrides,
   };

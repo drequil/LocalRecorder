@@ -72,6 +72,7 @@ function isWavFile(filePath) {
 function buildWhisperArgs({
   model, wav, language = null, threads = null,
   noSpeechThreshold = null, entropyThreshold = null,
+  gpu = null, gpuLayers = null,
 }) {
   if (!model) throw new TypeError('buildWhisperArgs: model is required');
   if (!wav) throw new TypeError('buildWhisperArgs: wav is required');
@@ -84,9 +85,23 @@ function buildWhisperArgs({
   // --entropy-thold: segments with token-level entropy above this are discarded
   //   as uncertain. Whisper default 2.4; we raise to 2.8.
   // -l: whisper.cpp source language (ISO 639-1). Omitted → auto-detect.
+  // GPU semantics (GPU-2):
+  //   gpu === false      → emit `--no-gpu` (hard CPU override; works on any
+  //                        whisper.cpp build that surfaces the flag).
+  //   gpu === true       → emit `-ngl <N>` only if gpuLayers is a positive int.
+  //                        Otherwise omit; CUDA builds default to all layers.
+  //   gpu == null        → emit nothing; let whisper.cpp's own default decide
+  //                        (CUDA build → GPU; CPU-only build → CPU).
+  // We keep the GPU flags adjacent to threads (-t) so the flag order is stable
+  // and easy to eyeball in the trace log.
   const args = ['--no-prints', '--output-txt', '-m', model];
   if (threads != null && Number.isInteger(threads) && threads > 0) {
     args.push('-t', String(threads));
+  }
+  if (gpu === false) {
+    args.push('--no-gpu');
+  } else if (gpu === true && gpuLayers != null && Number.isInteger(gpuLayers) && gpuLayers > 0) {
+    args.push('-ngl', String(gpuLayers));
   }
   if (noSpeechThreshold != null && Number.isFinite(noSpeechThreshold)) {
     args.push('--no-speech-thold', String(noSpeechThreshold));
@@ -125,8 +140,9 @@ function readTranscriptFile(wav) {
 }
 
 // Async entry point. Transcribes a single WAV via whisper-cli and returns
-// { text, model, wav, binary, durationMs, txtPath, exitCode }. Throws on missing
-// preconditions (binary, model, wav) or a non-zero exit from whisper-cli.
+// { text, model, wav, binary, durationMs, txtPath, exitCode, gpu, gpuLayers }.
+// Throws on missing preconditions (binary, model, wav) or a non-zero exit
+// from whisper-cli.
 async function transcribeFile({
   wav,
   model = DEFAULT_MODEL_PATH,
@@ -134,6 +150,8 @@ async function transcribeFile({
   threads = null,
   noSpeechThreshold = null,
   entropyThreshold = null,
+  gpu = null,
+  gpuLayers = null,
   binary = null,
   spawnFn = spawn,
   resolveBinaryFn = resolveBinary,
@@ -165,8 +183,8 @@ async function transcribeFile({
     );
   }
 
-  const args = buildWhisperArgs({ model, wav, language, threads, noSpeechThreshold, entropyThreshold });
-  trace('whisper', 'spawn', { binary: resolvedBinary, args, wav, model, language: language || null });
+  const args = buildWhisperArgs({ model, wav, language, threads, noSpeechThreshold, entropyThreshold, gpu, gpuLayers });
+  trace('whisper', 'spawn', { binary: resolvedBinary, args, wav, model, language: language || null, gpu, gpuLayers });
   const startedAt = Date.now();
 
   let stdout = '';
@@ -217,6 +235,12 @@ async function transcribeFile({
     durationMs,
     txtPath: transcript.txtPath,
     exitCode,
+    // GPU intent that was passed to whisper.cpp. The CLI doesn't echo back
+    // whether the GPU was actually used (that would require parsing stderr
+    // for "ggml_cuda_init"); callers that need ground-truth runtime info
+    // should rely on the trace stream or the bench tool from GPU-5.
+    gpu: gpu === true ? true : (gpu === false ? false : null),
+    gpuLayers: gpu === true && Number.isInteger(gpuLayers) && gpuLayers > 0 ? gpuLayers : null,
   };
 }
 
