@@ -1,6 +1,6 @@
 {
   "name": "localrecorder",
-  "version": "0.8.10",
+  "version": "0.8.11",
   "description": "Local-first AI memory and workflow assistant",
   "main": "src/index.js",
   "scripts": {

@@ -16,6 +16,7 @@ function extractSegments(doc) {
   const o = /** @type {Record<string, unknown>} */ (doc);
   const cand =
     o.segments
+    || (Array.isArray(o.transcription) ? o.transcription : null)
     || (o.transcription && typeof o.transcription === 'object'
       ? /** @type {Record<string, unknown>} */ (o.transcription).segments
       : null)
@@ -28,7 +29,7 @@ function extractSegments(doc) {
 function segmentText(seg) {
   if (!seg || typeof seg !== 'object') return '';
   const t = seg.text;
-  return typeof t === 'string' ? t.trim() : '';
+  return typeof t === 'string' ? t.replace(/\s*\[SPEAKER TURN\]\s*/g, ' ').trim() : '';
 }
 
 /**
