@@ -513,8 +513,6 @@ const speakersLabelOn = document.getElementById('speakers-label-on');
 const chunkFields   = document.getElementById('chunk-fields');
 const transcribeField = document.getElementById('transcribe-field');
 const speakersField = document.getElementById('speakers-field');
-const SPEAKERS_STORAGE_KEY = 'lr-ui-speakers-on';
-const SPEAKERS_STORAGE_LEGACY = 'lr-ui-diary-on';
 
 /** From GET /api/config — drives whisper-cpp capability banner under Speakers */
 let cachedSpeakerLabelsPayload = null;
@@ -558,12 +556,6 @@ modePills.forEach((pill) => {
 
 function speakersLabelsOn() {
   return speakersSlider.value === '1';
-}
-
-function readSpeakersPreference() {
-  let v = localStorage.getItem(SPEAKERS_STORAGE_KEY);
-  if (v === null) v = localStorage.getItem(SPEAKERS_STORAGE_LEGACY);
-  return v === '0' ? '0' : '1';
 }
 
 function syncSpeakersSliderUi() {
@@ -631,13 +623,12 @@ function updateModeUI() {
 }
 updateModeUI();
 
-(function initSpeakersSliderFromStorage() {
-  speakersSlider.value = readSpeakersPreference();
+(function initSpeakersSliderDefaultOn() {
+  speakersSlider.value = '1';
   syncSpeakersSliderUi();
 })();
 
 speakersSlider.addEventListener('input', () => {
-  localStorage.setItem(SPEAKERS_STORAGE_KEY, speakersSlider.value === '1' ? '1' : '0');
   syncSpeakersSliderUi();
 });
 

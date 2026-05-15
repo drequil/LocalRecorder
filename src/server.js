@@ -105,6 +105,7 @@ const state = {
   chunkCount: 0,
   sessionDir: null,
   transcribeEnabled: false,
+  speakerLabelsEnabled: false,
   queueDepth: 0,
   chunks: [],           // { name, wavPath, status, transcript? }
 };
@@ -126,6 +127,7 @@ function broadcastStatus() {
     chunkCount: state.chunkCount,
     sessionDir: state.sessionDir,
     transcribeEnabled: state.transcribeEnabled,
+    speakerLabelsEnabled: state.speakerLabelsEnabled,
     queueDepth: state.queueDepth,
   });
 }
@@ -156,6 +158,12 @@ function makeTranscribeLogger() {
       const name = path.basename(job.wav);
       const entry = state.chunks.find((c) => c.wavPath === job.wav);
       if (entry) { entry.status = 'ok'; entry.transcript = result ? result.text : ''; }
+      if (job.transcribeSpeakerLabels) {
+        const labelSummary = result && result.speakerLabelMode
+          ? `${result.speakerLabelMode}${result.jsonPath ? ` json=${path.basename(result.jsonPath)}` : ' json=missing'}`
+          : 'plain fallback';
+        console.log(`[speaker labels] ${name}: ${labelSummary}`);
+      }
       broadcast({
         type: 'chunk_complete',
         name,
@@ -286,6 +294,7 @@ app.get('/api/status', (_req, res) => {
     chunkCount: state.chunkCount,
     sessionDir: state.sessionDir,
     transcribeEnabled: state.transcribeEnabled,
+    speakerLabelsEnabled: state.speakerLabelsEnabled,
     queueDepth: state.queueDepth,
     chunks: state.chunks,
   });
@@ -397,8 +406,13 @@ app.post('/api/start', async (req, res) => {
   state.chunkCount = 0;
   state.sessionDir = sessionDir;
   state.transcribeEnabled = doTranscribe && mode !== 'listen';
+  state.speakerLabelsEnabled = transcribeSpeakerLabels;
   state.queueDepth = 0;
   state.chunks = [];
+  console.log(
+    `Transcribe        →  ${state.transcribeEnabled ? 'on' : 'off'}; ` +
+    `Speakers → ${state.speakerLabelsEnabled ? 'on' : 'off'}`,
+  );
 
   // Broadcast 'started' BEFORE calling the recorder so that clients clear
   // their transcript feed before the very first chunk_started event arrives.
@@ -406,7 +420,13 @@ app.post('/api/start', async (req, res) => {
   // in order; starting the recorder synchronously after the broadcast ensures
   // chunk_started always follows started, never precedes it.
   startStatusBroadcast();
-  broadcast({ type: 'started', mode, sessionDir, transcribeEnabled: state.transcribeEnabled });
+  broadcast({
+    type: 'started',
+    mode,
+    sessionDir,
+    transcribeEnabled: state.transcribeEnabled,
+    speakerLabelsEnabled: state.speakerLabelsEnabled,
+  });
 
   try {
     if (mode === 'record') {
@@ -426,7 +446,13 @@ app.post('/api/start', async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 
-  res.json({ ok: true, mode, sessionDir, transcribeEnabled: state.transcribeEnabled });
+  res.json({
+    ok: true,
+    mode,
+    sessionDir,
+    transcribeEnabled: state.transcribeEnabled,
+    speakerLabelsEnabled: state.speakerLabelsEnabled,
+  });
 });
 
 app.post('/api/stop', (req, res) => {
@@ -453,6 +479,7 @@ app.post('/api/stop', (req, res) => {
     state.queueDepth = 0;
     state.sessionDir = null;
     state.chunks = [];
+    state.speakerLabelsEnabled = false;
     broadcast({ type: 'stopped', sessionDir });
   }, 250);
 });
@@ -469,6 +496,7 @@ wss.on('connection', (ws) => {
     chunkCount: state.chunkCount,
     sessionDir: state.sessionDir,
     transcribeEnabled: state.transcribeEnabled,
+    speakerLabelsEnabled: state.speakerLabelsEnabled,
     queueDepth: state.queueDepth,
     chunks: state.chunks.slice(),
   }));
