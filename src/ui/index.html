@@ -440,9 +440,8 @@ let elapsedInterval = null;
 let chunkCount = 0;
 let queueDepth = 0;
 
-// Peak meter state
-let meterPeak = 0;
-let meterDecay = 0;
+// Peak meter state (see onPeakData + animateMeter)
+let levelSmooth = 0; // asymmetric EMA of linear peak — drives bar + main dB readout
 let peakHold = 0;
 let peakHoldTimer = null;
 
@@ -653,7 +652,10 @@ function setRecordingState(active, mode) {
     chunksEl.textContent = '0';
     updateQueue(0);
     sessionLabel.textContent = '';
-    meterPeak = 0;
+    levelSmooth = 0;
+    peakHold = 0;
+    clearTimeout(peakHoldTimer);
+    peakHoldTimer = null;
   }
 }
 
@@ -725,19 +727,24 @@ function linearAmplitudeToBarPercent(lin) {
 }
 
 function onPeakData(value) {
-  if (value > meterPeak) meterPeak = value;
-  if (value > peakHold) {
-    peakHold = value;
+  const v = Number.isFinite(value) && value > 0 ? value : 0;
+  // Asymmetric smoothing (~12 Hz server peaks): fast attack tracks speech hits;
+  // slow release damps noise-driven flutter between -50 and -90 dBFS on the
+  // log readout. Do not blend with zeros every rAF frame — that was the bug.
+  const ATTACK = 0.32;
+  const RELEASE = 0.055;
+  const k = v >= levelSmooth ? ATTACK : RELEASE;
+  levelSmooth = levelSmooth * (1 - k) + v * k;
+
+  if (v > peakHold) {
+    peakHold = v;
     clearTimeout(peakHoldTimer);
     peakHoldTimer = setTimeout(() => { peakHold = 0; }, 2000);
   }
 }
 
 (function animateMeter() {
-  meterDecay = meterDecay * 0.82 + meterPeak * 0.18;
-  meterPeak = 0;
-
-  const pct = linearAmplitudeToBarPercent(meterDecay);
+  const pct = linearAmplitudeToBarPercent(levelSmooth);
   meterBar.style.width = pct + '%';
 
   // Color: green (low) → yellow (mid) → red (hot)
@@ -746,7 +753,7 @@ function onPeakData(value) {
   const lit = pct > 80 ? 42 : 45;
   meterBar.style.background = `hsl(${hue}, ${sat}%, ${lit}%)`;
 
-  const db = meterDecay > 0 ? 20 * Math.log10(Math.max(0.00001, meterDecay)) : null;
+  const db = levelSmooth > 1e-7 ? 20 * Math.log10(Math.max(1e-10, levelSmooth)) : null;
   meterDbEl.textContent = db != null ? db.toFixed(1) + ' dBFS' : '— dBFS';
 
   if (peakHold > 0) {
