@@ -80,6 +80,17 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* GPU badge: avoid single-line ellipsis hiding the model; allow wrap in 280px sidebar */
+#gpu-badge {
+  max-width: 100%;
+  min-width: 0;
+  white-space: normal;
+  line-height: 1.35;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  overflow: visible;
+  text-overflow: clip;
+}
 #status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text3); transition: background 0.3s; }
 #status-dot.idle    { background: var(--text3); }
 #status-dot.active  { background: var(--green); animation: pulse 1.2s ease-in-out infinite; }
@@ -303,7 +314,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
       <div class="header-badges">
         <span id="model-chip" class="chip-truncate" title="" style="font-size:10px;font-family:var(--mono);color:var(--text3);background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:2px 6px;white-space:nowrap;display:none;"></span>
         <!-- GPU-3: second row so long GPU names don't crowd the model chip (narrow sidebar). -->
-        <span id="gpu-badge" class="chip-truncate" title="" style="font-size:10px;font-family:var(--mono);color:var(--text3);background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:2px 6px;white-space:nowrap;display:none;"></span>
+        <span id="gpu-badge" title="" style="font-size:10px;font-family:var(--mono);color:var(--text3);background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:2px 6px;display:none;"></span>
       </div>
     </div>
 
@@ -729,10 +740,10 @@ function linearAmplitudeToBarPercent(lin) {
 function onPeakData(value) {
   const v = Number.isFinite(value) && value > 0 ? value : 0;
   // Asymmetric smoothing (~12 Hz server peaks): fast attack tracks speech hits;
-  // slow release damps noise-driven flutter between -50 and -90 dBFS on the
-  // log readout. Do not blend with zeros every rAF frame — that was the bug.
-  const ATTACK = 0.32;
-  const RELEASE = 0.055;
+  // release faster than 0.055 so the bar doesn't "stick" after pauses, but still
+  // slower than attack to filter noise flutter on the dB readout.
+  const ATTACK = 0.34;
+  const RELEASE = 0.11;
   const k = v >= levelSmooth ? ATTACK : RELEASE;
   levelSmooth = levelSmooth * (1 - k) + v * k;
 
@@ -972,14 +983,36 @@ const gpuBadge     = document.getElementById('gpu-badge');
 let defaultRecordingsRoot = '';
 
 // GPU-3: render the small "GPU: <name>" / "GPU: off" badge in the sidebar.
-// We accept the gpu object that /api/config returns and pick a short label
-// (the GPU name truncated to 22 chars, or "off"). The badge's title attribute
-// carries the long-form reason / VRAM / driver string so the user can hover
-// for the full story.
+// Strip common vendor prefixes so e.g. "RTX 4070 Ti" fits without a mid-token
+// slice; word-aware cap (~48 chars) only if still long. title = full device + details.
+function gpuBadgeDisplayName(deviceName) {
+  const raw = String(deviceName || 'GPU').trim();
+  if (!raw) return 'GPU';
+  let s = raw;
+  const prefixes = [
+    /^NVIDIA\s+GeForce\s+/i,
+    /^NVIDIA\s+/i,
+    /^GeForce\s+/i,
+    /^AMD\s+Radeon\s+/i,
+    /^AMD\s+/i,
+    /^Intel\s+\(R\)\s+Arc\s+\(TM\)\s+/i,
+    /^Intel\s+Arc\s+/i,
+    /^Intel\s+\(R\)\s+/i,
+  ];
+  for (const re of prefixes) s = s.replace(re, '');
+  s = s.trim() || raw;
+  const maxLen = 48;
+  if (s.length <= maxLen) return s;
+  const slice = s.slice(0, maxLen);
+  const lastSpace = slice.lastIndexOf(' ');
+  const cut = lastSpace > 24 ? slice.slice(0, lastSpace) : slice;
+  return cut + '…';
+}
+
 function renderGpuBadge(gpu) {
   if (!gpu) { gpuBadge.style.display = 'none'; return; }
   if (gpu.available) {
-    const name = (gpu.deviceName || 'GPU').slice(0, 22);
+    const name = gpuBadgeDisplayName(gpu.deviceName);
     gpuBadge.textContent = `GPU: ${name}`;
     gpuBadge.style.color = '#7fd181';  // green on dark
     gpuBadge.style.borderColor = '#3b6b3d';

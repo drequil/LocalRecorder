@@ -247,7 +247,7 @@ class AudioRecorder {
       useWhisperServer = true,
       transcribeFn,
       transcribeLogger = null,
-      transcribeMinPeak = 0.02,
+      transcribeMinPeak = 0.005,
       transcribeQueueMax = 5,
       transcribeRetries = 1,
       peakHandler,
@@ -316,11 +316,12 @@ class AudioRecorder {
         : null;
     // T-5: peak gating threshold. Chunks whose sidecar peak < this are
     // marked 'skipped' with a stub .md and never enter the transcription
-    // queue. Default 0.02 (~-34 dBFS) is above typical room hum/HVAC but
-    // well below conversational speech. Set to 0 to disable the gate.
+    // queue. Default 0.005 (~-46 dBFS) matches `--transcribe-min-peak` CLI help and
+    // skips only true dead-air; 0.02 (~-34 dBFS) incorrectly dropped normal speech
+    // when sidecar peaks sit around -40..-50 dBFS (common at moderate mic gain).
     this.transcribeMinPeak = Number.isFinite(transcribeMinPeak) && transcribeMinPeak >= 0
       ? transcribeMinPeak
-      : 0.02;
+      : 0.005;
     // T-5: backpressure threshold. When queue length exceeds this, fire a
     // one-shot warn (re-armed when the queue drains). Default 5; set to 0
     // to disable the warning.
@@ -540,7 +541,7 @@ class AudioRecorder {
       // .json sibling already being on disk.
       //
       // T-5: peak gating. If the sidecar says the chunk's peak is below
-      // `transcribeMinPeak` (default 0.02), skip the queue entirely and
+      // `transcribeMinPeak` (default 0.005), skip the queue entirely and
       // write a `_skipped: ..._` .md stub immediately. Saves whisper.cpp
       // CPU on dead-air chunks and gives the user explicit visibility into
       // why a particular chunk's .txt is missing.

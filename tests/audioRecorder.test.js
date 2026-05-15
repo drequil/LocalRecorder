@@ -819,9 +819,9 @@ describe('T-5 resilience: retry classification + runWithMarkdown integration', (
 });
 
 describe('T-5 resilience: AudioRecorder peak gating + queue overflow', () => {
-  test('default constructor sets transcribeMinPeak=0.02, transcribeQueueMax=5, transcribeRetries=1', () => {
+  test('default constructor sets transcribeMinPeak=0.005, transcribeQueueMax=5, transcribeRetries=1', () => {
     const r = new AudioRecorder({ transcribe: true, transcribeFn: jest.fn() });
-    expect(r.transcribeMinPeak).toBe(0.02);
+    expect(r.transcribeMinPeak).toBe(0.005);
     expect(r.transcribeQueueMax).toBe(5);
     expect(r.transcribeRetries).toBe(1);
   });
@@ -850,9 +850,9 @@ describe('T-5 resilience: AudioRecorder peak gating + queue overflow', () => {
 
   test('negative / non-finite transcribeMinPeak falls back to default', () => {
     const r1 = new AudioRecorder({ transcribe: true, transcribeFn: jest.fn(), transcribeMinPeak: -1 });
-    expect(r1.transcribeMinPeak).toBe(0.02);
+    expect(r1.transcribeMinPeak).toBe(0.005);
     const r2 = new AudioRecorder({ transcribe: true, transcribeFn: jest.fn(), transcribeMinPeak: NaN });
-    expect(r2.transcribeMinPeak).toBe(0.02);
+    expect(r2.transcribeMinPeak).toBe(0.005);
   });
 });
 
