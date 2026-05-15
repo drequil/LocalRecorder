@@ -51,16 +51,35 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 
 /* ---- Header ---- */
 #header {
-  height: 44px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   display: flex;
-  align-items: center;
-  padding: 0 16px;
-  gap: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 8px 16px 10px;
+  gap: 6px;
   flex-shrink: 0;
 }
-#header h1 { font-size: 13px; font-weight: 600; letter-spacing: 0.05em; color: var(--text); }
+.header-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 26px;
+}
+#header h1 { font-size: 13px; font-weight: 600; letter-spacing: 0.05em; color: var(--text); margin: 0; }
+#version-badge { margin-left: auto; flex-shrink: 0; }
+.header-badges {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  width: 100%;
+}
+.chip-truncate {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 #status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text3); transition: background 0.3s; }
 #status-dot.idle    { background: var(--text3); }
 #status-dot.active  { background: var(--green); animation: pulse 1.2s ease-in-out infinite; }
@@ -275,15 +294,17 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   <!-- SIDEBAR -->
   <aside id="sidebar">
 
-    <div id="header" style="border-bottom: 1px solid var(--border);">
-      <span id="status-dot" class="idle"></span>
-      <h1>LocalRecorder</h1>
-      <span id="model-chip" title="" style="margin-left:auto;font-size:10px;font-family:var(--mono);color:var(--text3);background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:2px 6px;white-space:nowrap;display:none;"></span>
-      <!-- GPU-3: shows "GPU: RTX 4070 Ti" green-on-dark when /api/config reports
-           gpu.available, "GPU: off" gray-on-dark otherwise. `title` carries the
-           full reason on hover so the user can tell why it's off. -->
-      <span id="gpu-badge" title="" style="font-size:10px;font-family:var(--mono);color:var(--text3);background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:2px 6px;white-space:nowrap;display:none;"></span>
-      <span id="version-badge" style="font-size:10px;font-family:var(--mono);color:var(--text3);"></span>
+    <div id="header">
+      <div class="header-top">
+        <span id="status-dot" class="idle"></span>
+        <h1>LocalRecorder</h1>
+        <span id="version-badge" style="font-size:10px;font-family:var(--mono);color:var(--text3);"></span>
+      </div>
+      <div class="header-badges">
+        <span id="model-chip" class="chip-truncate" title="" style="font-size:10px;font-family:var(--mono);color:var(--text3);background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:2px 6px;white-space:nowrap;display:none;"></span>
+        <!-- GPU-3: second row so long GPU names don't crowd the model chip (narrow sidebar). -->
+        <span id="gpu-badge" class="chip-truncate" title="" style="font-size:10px;font-family:var(--mono);color:var(--text3);background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:2px 6px;white-space:nowrap;display:none;"></span>
+      </div>
     </div>
 
     <!-- Mode -->
