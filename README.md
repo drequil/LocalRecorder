@@ -275,6 +275,25 @@ Acceptance criteria (per `docs/sprint-plan.md`):
 If transcription accuracy is disappointing on `ggml-base.en.bin` (the
 default), step up to a bigger model -- see the table below.
 
+### GPU acceleration
+
+whisper.cpp can run on an NVIDIA GPU if the binary you have on PATH was built with CUDA (cuBLAS). The CPU baseline above is unchanged; GPU support is purely additive and falls back transparently when unavailable.
+
+Quick check:
+
+```bash
+npm run gpu:check
+```
+
+That probe reports two independent things:
+
+1. Whether `nvidia-smi` finds a GPU (with name, VRAM, driver version).
+2. Whether the `whisper-cli` on PATH advertises GPU flags in its `--help` text (`--no-gpu`, `-ngl`, `cublas`, ...). A "yes" here strongly suggests but does not guarantee a cuBLAS build; the real proof shows up in GPU-5's benchmark and in whisper.cpp's own startup log line (`ggml_cuda_init: found N CUDA device(s)` on success, nothing on a CPU-only build).
+
+If both halves are positive, GPU acceleration is "available" and (once GPU-2 is shipped on this branch) will be used by default. Pass `--no-gpu` on `record`, `idle`, or `transcribe` to force CPU.
+
+To actually install a CUDA-enabled whisper.cpp build on Windows: grab the cuBLAS release ZIP from <https://github.com/ggerganov/whisper.cpp/releases> (look for `whisper-bin-x64.cublas.zip` or similar) and put the folder containing `whisper-cli.exe` on your PATH. A future sprint (GPU-4) automates this via `npm run gpu:install`.
+
 ### Model trade-offs
 
 `whisper.cpp` ships multiple ggml models. Bigger = better accuracy but

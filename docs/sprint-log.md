@@ -697,3 +697,37 @@ Next: MS-1 — sox dependency probe. After that the track proceeds linearly thro
   - **Per-chunk `.md` files still produced.** Removing them would break T-4 acceptance and surprise the user. They're harmless -- ignore them or delete after the session if they bother you. T-8 / later sprint might toggle them via a flag
   - **No close-on-shutdown finalisation.** The HTML document is "always valid" -- it has the closing tags from the moment of creation; appends splice INSIDE the body. So if the process crashes mid-meeting the file is still openable. No need for an explicit "session close" step
 - Why: the user was running a meeting and getting fragmented chunks they couldn't reasonably review. Per-chunk markdown was the wrong granularity for that workflow. This sprint delivers the right granularity (per-session HTML, opens in any browser) and the right rotation knob (`--silence 0` for environments where sox is misbehaving). Took ~45 minutes total; both changes are small, well-tested, and roll back trivially (per-chunk .md still works exactly as before; `--silence N>0` is still the default)
+
+## Sprint version-tracking: v0.2.0 (Completed)
+- Backfilled the workflow rule that should have governed prior sprints: every commit bumps `package.json` `version` and the running server advertises that version on `GET /api/config`. The UI now renders it as a small `vX.Y.Z` badge in the sidebar so the user can confirm a restart picked up new code without grepping files
+- Files modified:
+  - `.instructions.md` (new section 8 "Bump Version" + version history table)
+  - `package.json` (0.1.0 -> 0.2.0; the 0.2.0 milestone retroactively names the previous web-UI sprint)
+  - `src/server.js` (expose `version` on `/api/config`; reorder broadcast/started emission so `chunk_started` never races `started`; replace the initial `status` WS frame with a richer `sync` frame carrying the full chunks array)
+  - `src/ui/index.html` (sidebar version badge; `sync` handler that clears+rebuilds the transcript feed; `(no speech)` text for ok-but-empty chunks; debounced scroll-to-bottom on `chunk_started`)
+- Validation: `node --check` clean across both server and UI sources (HTML inline JS is hand-validated); `npm test` continues to pass (no test surface changed by this sprint)
+- Known limitations:
+  - Version is reported only via `/api/config`; the CLI doesn't print it on startup. A `node src/index.js --version` could be added in a future sprint
+  - The `sync` frame includes the full `chunks` array. For very long sessions (thousands of chunks) this is a few hundred KB on connect; perfectly fine for one-meeting sessions but worth noting if anyone tries to leave the recorder running for days
+- Why: the project had no version discipline. Sprints were shipping but `package.json` stayed at 0.1.0 and the running server gave no signal about what code it actually loaded. This sprint fixes both at once: the rule is written down, the running server proves it followed the rule, and the UI surfaces the proof
+
+## Sprint GPU-1: v0.3.0 (Completed)
+- Opened the `feature/gpu-acceleration` track. First sprint is detection-only: tell the user (a) whether an NVIDIA GPU is visible to this machine, and (b) whether the whisper.cpp binary on PATH was built with CUDA. No transcription behaviour changes yet
+- Files added:
+  - `tools/check-gpu.js` -- `detectGpu()` library function + `npm run gpu:check` CLI entry. Two independent probes:
+    - `runNvidiaSmi()` shells out to `nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits` and parses one row per detected GPU (name, VRAM in MiB, driver version). Handles "N/A" VRAM, multi-GPU hosts, ENOENT (nvidia-smi not installed), non-zero exit (driver not responding), and empty output
+    - `inspectWhisperBuild()` reuses `pickCandidateBinary` from `tools/check-transcribe-deps.js` (single source of truth for binary discovery), then scans the `--help` text for `--no-gpu` / `-ngl` / `--n-gpu-layers` / `cublas` / `CUDA` / `use gpu`. Any hit ⇒ the binary advertises GPU offload. Caller gets `{ binary, binaryPath, cudaCapable, sawFlags, reason }`
+    - `detectGpu()` composes both and is memoised at module level (server consumers don't reprobe per request). `effective` is true only when both halves are positive
+    - `printHumanSummary()` formats the four user-facing outcomes: AVAILABLE / GPU-only / binary-only / nothing. Each non-available case names the next step
+  - `tests/checkGpu.test.js` -- 15 tests covering: single + multi-GPU CSV parsing, missing nvidia-smi, non-zero exit, empty rows, "N/A" VRAM, CUDA-capable detection, CPU-only detection, missing binary, case-insensitive token match, and the three summary banners. All injectable via `runner` / `probe` so the suite never spawns anything
+- Files modified:
+  - `package.json` (0.2.0 -> 0.3.0; new feature surface added so per `.instructions.md` rule 8 this is a minor bump). Added `"gpu:check": "node tools/check-gpu.js"` script
+- Validation:
+  - `npx jest --ci --forceExit tests/checkGpu.test.js` -- 15/15 passing
+  - Live smoke on the workstation: `node tools/check-gpu.js` reports `NVIDIA GeForce RTX 4070 Ti (12282 MiB)`, driver `560.94`, and flags the installed `whisper-cli.EXE` (from `D:\bin\whisper-blas-bin-Win32`) as advertising `--no-gpu`. End-to-end output reads cleanly
+- Known limitations / observations:
+  - **The card is an RTX 4070 Ti, not a 4080 Ti.** The initial conversation referenced the 4080 Ti but the live probe is the source of truth. The plan still applies; numbers in GPU-5's benchmark will reflect actual hardware
+  - **Token-match heuristic has a false-positive surface.** The installed binary on this workstation is `whisper-blas-bin-Win32` -- an OpenBLAS build, not cuBLAS -- yet its help text exposes `--no-gpu` because modern whisper.cpp surfaces the flag regardless of build. The probe says "cudaCapable: yes" but at runtime that binary will still execute on the CPU. We accept the false positive for now because: (a) the runtime check (whisper.cpp's own startup log: `ggml_cuda_init: found 1 CUDA device` vs nothing) is the only fully reliable signal, and (b) GPU-5's benchmark will surface real per-chunk timings that prove or refute GPU offload. A future refinement could parse `--help` for a build-banner line (some builds print `whisper.cpp v1.7.0 (cuBLAS)`) and prefer that signal
+  - **AMD / Intel / Apple paths not wired.** `runNvidiaSmi` is NVIDIA-only. Adding `rocm-smi` (AMD) and Apple Silicon Metal probes is a future small sprint when those hosts come online
+  - **Probe is cached for the module's lifetime.** A user who swaps `whisper-cli` mid-server-process won't see the change without a restart. Acceptable: binary swaps are rare and we re-probe on every fresh process
+- Why: GPU-1 is the smallest useful step. It lets the user run `npm run gpu:check`, see whether their hardware + binary support GPU transcription, and surfaces the exact failure mode if not. The rest of `feature/gpu-acceleration` (flag plumbing, UI badge, auto-installer, benchmark) builds on top of this single probe

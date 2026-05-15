@@ -149,15 +149,62 @@
 <li>summarize remaining concerns</li>
 </ul>
 <hr>
-<h2>(8) Commit Locally</h2>
+<h2>(8) Bump Version</h2>
+<p>Before committing, increment <code>package.json</code> <code>&quot;version&quot;</code> using semantic versioning:</p>
+<table>
+<thead>
+<tr>
+<th>Change type</th>
+<th>Bump</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Bug fix / patch (no new surface)</td>
+<td><code>0.x.Y → 0.x.Y+1</code></td>
+</tr>
+<tr>
+<td>New feature / minor addition</td>
+<td><code>0.X.0 → 0.X+1.0</code></td>
+</tr>
+<tr>
+<td>Breaking change or major milestone</td>
+<td><code>X.0.0 → X+1.0.0</code></td>
+</tr>
+</tbody></table>
+<p>Rules:</p>
+<ul>
+<li>Never skip this step — every commit must carry a unique version.</li>
+<li>The running server exposes its version at <code>GET /api/config</code> (<code>&quot;version&quot;</code> field).</li>
+<li>The UI renders the version in the sidebar header so the user can confirm a server restart picked up new code without needing to inspect files.</li>
+<li>Update this table example row after each bump so the history is traceable.</li>
+</ul>
+<p>Version history (most recent first):</p>
+<table>
+<thead>
+<tr>
+<th>Version</th>
+<th>Sprint description</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>0.2.0</td>
+<td>Local web UI (Express + WebSocket), peak meter, live transcript, session browser</td>
+</tr>
+<tr>
+<td>0.1.0</td>
+<td>Initial CLI — record / chunk / listen / transcribe / devices</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>(9) Commit Locally</h2>
 <p>Create a small atomic commit.</p>
 <p>Commit message format:</p>
-<p>[sprint-X] concise-description</p>
+<p>[sprint-X] vX.Y.Z concise-description</p>
 <p>Examples:</p>
 <ul>
-<li>[sprint-1] initialize local recorder pipeline</li>
-<li>[sprint-2] add chunked whisper transcription</li>
-<li>[sprint-3] add rolling markdown summaries</li>
+<li>[sprint-1] v0.1.0 initialize local recorder pipeline</li>
+<li>[sprint-2] v0.1.1 fix chunked whisper transcription ordering</li>
+<li>[sprint-3] v0.2.0 add local web UI</li>
 </ul>
 <p>Do NOT push by default. Only push when explicitly directed by the user per the As-Directed Pushes rule above.</p>
 <hr>

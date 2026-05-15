@@ -30,9 +30,11 @@
 <body>
   <p class="meta">Generated from <code>docs/quickstart.md</code> &middot; <a href="../../docs/quickstart.md">view source</a></p>
 <h1>LocalRecorder — Quickstart</h1>
-<p>All commands assume your current directory is the repo root. Output always
-lands under <code>./recordings/&lt;session&gt;/</code> unless you override it with <code>--root</code>
-or a positional path, so nothing pollutes the repo root.</p>
+<p>All commands assume your current directory is the repo root. By default,
+output lands under <code>./recordings/&lt;YYYY-MM-DD&gt;/</code> (and <code>./recordings/&lt;YYYY-MM-DD&gt;/&lt;name&gt;/</code>
+when you use <code>--name</code>). Override the root with <strong><code>--root</code></strong>, or set a machine default
+with <strong><code>%USERPROFILE%\.localrecorder\config.json</code></strong> (see <strong><code>docs/localrecorder-config.example.json</code></strong> — optional keys include <code>recordingsRoot</code>, <code>transcribeModel</code>, <code>transcribeLanguage</code>).
+A positional path still wins and skips the auto-layout.</p>
 <h2>Quick reference</h2>
 <table>
 <thead>
@@ -50,32 +52,37 @@ or a positional path, so nothing pollutes the repo root.</p>
 <tr>
 <td><strong>Quick test record</strong> (one WAV, 5 s)</td>
 <td><code>node src/index.js record --duration 5</code></td>
-<td><code>./recordings/2026-05-12/recording-&lt;ts&gt;.wav</code></td>
+<td><code>./recordings/2026-05-12/recording-&lt;ts&gt;.wav</code> — if <code>./models/ggml-base.en.bin</code> exists, <strong>transcription still runs automatically</strong> after stop; otherwise WAV + <code>.json</code> only</td>
 </tr>
 <tr>
 <td><strong>Named single recording</strong></td>
 <td><code>node src/index.js record --name testcall --duration 30</code></td>
-<td><code>./recordings/testcall/testcall-&lt;ts&gt;.wav</code></td>
+<td><code>./recordings/2026-05-12/testcall/testcall-&lt;ts&gt;.wav</code></td>
+</tr>
+<tr>
+<td><strong>Single WAV + transcribe after stop</strong></td>
+<td><code>node src/index.js record --name memo --transcribe --model models\ggml-base.en.bin --duration 120</code></td>
+<td>One <code>.wav</code> + sidecar under the date/name folder; on Ctrl+C or duration end, whisper runs once → <code>.txt</code>, <code>.md</code>, <code>transcript.html</code> there</td>
 </tr>
 <tr>
 <td><strong>Chunked capture, no transcription</strong> (5 minutes)</td>
 <td><code>node src/index.js idle --name meeting --duration 300</code></td>
-<td><code>./recordings/meeting/chunk-&lt;ts&gt;.wav</code> + <code>.json</code> per silence-rotated chunk</td>
+<td><code>./recordings/2026-05-12/meeting/chunk-&lt;ts&gt;.wav</code> + <code>.json</code> per silence-rotated chunk</td>
 </tr>
 <tr>
 <td><strong>Phase 4 demo: capture + auto-transcribe</strong></td>
 <td><code>node src/index.js idle --name demo --duration 60 --threshold 0.5 --silence 2 --transcribe</code></td>
-<td><code>./recordings/demo/chunk-&lt;ts&gt;.{wav,json,txt,md}</code> quartet per chunk</td>
+<td><code>./recordings/2026-05-12/demo/chunk-&lt;ts&gt;.{wav,json,txt,md}</code> quartet per chunk</td>
 </tr>
 <tr>
 <td><strong>Long meeting, leave it running</strong> (1 hour)</td>
 <td><code>node src/index.js idle --name standup --duration 3600 --threshold 0.5 --silence 20 --transcribe</code></td>
-<td><code>./recordings/standup/</code> filling up live</td>
+<td><code>./recordings/2026-05-12/standup/</code> filling up live</td>
 </tr>
 <tr>
 <td><strong>Push output OUT of the repo entirely</strong></td>
 <td><code>node src/index.js idle --root D:\recordings --name meeting --transcribe --duration 60</code></td>
-<td><code>D:\recordings\meeting\chunk-&lt;ts&gt;.{wav,json,txt,md}</code></td>
+<td><code>D:\recordings\2026-05-12\meeting\chunk-&lt;ts&gt;.{wav,json,txt,md}</code></td>
 </tr>
 <tr>
 <td><strong>Pick a specific output dir</strong> (no auto-layout)</td>
@@ -85,11 +92,11 @@ or a positional path, so nothing pollutes the repo root.</p>
 <tr>
 <td><strong>Higher-accuracy transcription</strong></td>
 <td><code>node src/index.js idle --name interview --transcribe --model models\ggml-small.en.bin --duration 600</code></td>
-<td><code>./recordings/interview/...</code> with <code>small.en</code> quality</td>
+<td><code>./recordings/2026-05-12/interview/...</code> with <code>small.en</code> quality</td>
 </tr>
 <tr>
 <td><strong>Transcribe one existing WAV</strong></td>
-<td><code>node src/index.js transcribe .\recordings\meeting\chunk-20260512-162301-489.wav</code></td>
+<td><code>node src/index.js transcribe .\recordings\2026-05-12\meeting\chunk-20260512-162301-489.wav</code></td>
 <td>prints transcript to stdout; writes <code>&lt;basename&gt;.txt</code> next to the wav</td>
 </tr>
 <tr>
@@ -113,7 +120,7 @@ or a positional path, so nothing pollutes the repo root.</p>
 <td><code>[transcribe backlog]</code> warns at depth &gt; 2</td>
 </tr>
 </tbody></table>
-<h2>Where things land — three layout modes</h2>
+<h2>Where things land — layout + overrides</h2>
 <table>
 <thead>
 <tr>
@@ -123,15 +130,23 @@ or a positional path, so nothing pollutes the repo root.</p>
 </thead>
 <tbody><tr>
 <td>nothing (just <code>idle</code> / <code>record</code>)</td>
-<td><code>./recordings/&lt;YYYY-MM-DD&gt;/</code> (today&#39;s date, single shared folder)</td>
+<td><code>./recordings/&lt;YYYY-MM-DD&gt;/</code> for that day’s unnamed captures</td>
 </tr>
 <tr>
 <td><code>--name &lt;label&gt;</code></td>
-<td><code>./recordings/&lt;label&gt;/</code> (auto-slugified — spaces and punctuation become <code>-</code>)</td>
+<td><code>./recordings/&lt;YYYY-MM-DD&gt;/&lt;label&gt;/</code> (label auto-slugified)</td>
 </tr>
 <tr>
 <td><code>--root &lt;dir&gt; [--name &lt;label&gt;]</code></td>
-<td><code>&lt;dir&gt;/&lt;label-or-date&gt;/</code></td>
+<td><code>&lt;dir&gt;/&lt;YYYY-MM-DD&gt;/</code> or <code>&lt;dir&gt;/&lt;YYYY-MM-DD&gt;/&lt;label&gt;/</code></td>
+</tr>
+<tr>
+<td>JSON config <code>recordingsRoot</code> (no <code>--root</code>)</td>
+<td>Same layout as above, but under that root instead of <code>./recordings</code></td>
+</tr>
+<tr>
+<td><code>LOCALRECORDER_CONFIG</code> env</td>
+<td>Path to a JSON file — same keys as above; checked <strong>before</strong> <code>%USERPROFILE%\.localrecorder\config.json</code></td>
 </tr>
 <tr>
 <td>positional <code>&lt;dir&gt;</code> to <code>idle</code></td>
@@ -144,15 +159,26 @@ or a positional path, so nothing pollutes the repo root.</p>
 </tbody></table>
 <h2>The two flags worth memorizing</h2>
 <ul>
-<li><code>--name &lt;label&gt;</code> — gives the session a meaningful folder name. Same name
-on different days appends to the same folder; the timestamped filenames
-keep them collision-free.</li>
-<li><code>--transcribe</code> — turns on the Phase 4 pipeline. Adds the <code>.txt</code> and
-<code>.md</code> siblings for every loud-enough chunk. Costs CPU; needs
-<code>whisper-cli</code> on <code>PATH</code> and a model under <code>./models/ggml-base.en.bin</code>
-(or wherever you point <code>--model</code>).</li>
+<li><code>--name &lt;label&gt;</code> — adds a <strong><code>&lt;label&gt;/</code></strong> folder under <strong>today’s date</strong>, so
+different meetings on the same calendar day stay grouped. Timestamped
+filenames keep files collision-free.</li>
+<li><code>--transcribe</code> — turns on the Phase 4 pipeline. On <strong>idle</strong>, adds <code>.txt</code> /
+<code>.md</code> / <code>transcript.html</code> per chunk. On <strong>record</strong>, one WAV is captured and
+transcription runs once when the file closes (same artifacts next to the
+WAV). Costs CPU; needs <code>whisper-cli</code> on <code>PATH</code> and a model (default
+<code>./models/ggml-base.en.bin</code>, or <code>--model &lt;path&gt;</code>).</li>
 </ul>
-<h2>Per-chunk artifacts (with <code>--transcribe</code>)</h2>
+<h2>Verbose traces (debugging “no transcription”)</h2>
+<p>Set <code>LOCALRECORDER_TRACE=1</code> (or <code>true</code> / <code>yes</code> / <code>on</code>) <strong>or</strong> pass <code>--trace</code> on
+<code>record</code> / <code>idle</code>. The CLI prints structured lines to <strong>stderr</strong> with prefix
+<code>[lr:trace …]</code> showing: whether the transcription queue exists, WAV finalize
+→ enqueue vs peak-gate skip, queue job start/end, whisper-cli spawn argv,
+shutdown → <code>drainTranscriptions</code> boundaries.</p>
+<p>Example (PowerShell):</p>
+<pre><code class="language-powershell">$env:LOCALRECORDER_TRACE = &#39;1&#39;
+node src/index.js idle --name debug --transcribe --duration 15
+</code></pre>
+<p>Or in one line: <code>node src/index.js idle --name debug --transcribe --trace --duration 15</code>.</p>
 <p>For each idle chunk you get up to four files:</p>
 <table>
 <thead>
@@ -188,22 +214,49 @@ keep them collision-free.</li>
 <td><strong>The meeting-level artifact.</strong> A single self-contained HTML document at the session-dir root that grows live as chunks complete. Open it in any browser; you don&#39;t need any of the per-chunk files to read it.</td>
 </tr>
 </tbody></table>
-<h2>Disable the silence detector (recommended for long meetings)</h2>
+<h2><code>record</code> and automatic transcription</h2>
+<p>For <strong>single-file</strong> capture, you do <strong>not</strong> need a second <code>transcribe</code> command when the
+default model file is present: if <code>models/ggml-base.en.bin</code> exists (or the path you pass
+with <code>--model</code>), whisper.cpp runs <strong>once</strong> after you press Ctrl+C or when <code>--duration</code>
+expires. The same shutdown path as <code>idle --transcribe</code> waits for that job to finish
+before exit.</p>
+<ul>
+<li><strong><code>--no-transcribe</code></strong> — force WAV + sidecar only (no whisper), even if the model exists.</li>
+<li><strong><code>--transcribe</code></strong> — force transcription; errors at startup if the model path is missing.</li>
+</ul>
+<p><strong><code>idle</code></strong> does <strong>not</strong> auto-enable transcription when the model exists (every chunk would
+spawn whisper without an explicit opt-in). Use <code>idle … --transcribe</code> there.</p>
+<h3>Other languages (e.g. Hindi)</h3>
+<p>Whisper needs a <strong>multilingual</strong> model file (e.g. <code>ggml-base.bin</code>, <code>ggml-small.bin</code>) — <strong>not</strong>
+the <code>*.en.bin</code> English-only checkpoints. Download the matching <code>.bin</code> from the same
+<a href="https://huggingface.co/ggerganov/whisper.cpp/tree/main">Hugging Face whisper.cpp tree</a>, then pass <strong><code>--language hi</code></strong> on <strong><code>record</code></strong>, <strong><code>idle</code></strong>, or <strong><code>transcribe</code></strong> (maps to whisper.cpp <strong><code>-l hi</code></strong>). Use <strong><code>--language auto</code></strong> to let whisper pick the language.</p>
 <p>In some audio environments sox&#39;s silence detector misfires (room noise floor fluctuates around the threshold), rotating chunks every few seconds. Pass <code>--silence 0</code> to bypass it entirely; chunks then rotate <strong>only</strong> on <code>--max-chunk-seconds</code>. For a meeting you usually want 5-minute chunks:</p>
 <pre><code class="language-cmd">node D:\repos\LocalRecorder\src\index.js idle --root D:\recordings --name MeetingTest --transcribe --model D:\repos\LocalRecorder\models\ggml-base.en.bin --silence 0 --max-chunk-seconds 300
 </code></pre>
-<h2>Worked example — keep your repo tidy</h2>
-<p>Route all sessions to an external directory so nothing ever lands in the
-repo working tree:</p>
-<pre><code class="language-powershell"># One-time: set an env var so you don&#39;t have to type --root every time.
-$env:LR_ROOT = &quot;D:\recordings&quot;
-
-# Now any session goes under D:\recordings\&lt;name&gt;\
-node src/index.js idle --root $env:LR_ROOT --name $(Get-Date -Format yyyyMMdd-HHmm) `
+<h2>Worked example — default <code>D:\recordings</code> without typing <code>--root</code></h2>
+<p>Create <strong><code>%USERPROFILE%\.localrecorder\config.json</code></strong> (one-time):</p>
+<pre><code class="language-json">{ &quot;recordingsRoot&quot;: &quot;D:/recordings&quot; }
+</code></pre>
+<p>Then from the repo (or anywhere, if you use full paths to <code>src\index.js</code> and
+<code>--model</code>), captures use <strong><code>D:\recordings\&lt;YYYY-MM-DD&gt;\</code>** or
+**<code>D:\recordings\&lt;YYYY-MM-DD&gt;\&lt;name&gt;\</code></strong>. <strong><code>--root</code> on the command line still wins</strong>
+over the file.</p>
+<p>Example session with a time-based <strong>name</strong> (slug becomes the folder under today’s date):</p>
+<pre><code class="language-powershell">node src/index.js idle --name $(Get-Date -Format yyyyMMdd-HHmm) `
                       --threshold 0.5 --silence 5 --transcribe --duration 3600
 </code></pre>
-<p>That session lands under <code>D:\recordings\20260512-1700\</code> as <code>chunk-*.wav</code> +
-<code>.json</code> + <code>.txt</code> + <code>.md</code> — and <code>D:\repos\LocalRecorder</code> stays clean.</p>
+<p>That lands under <code>D:\recordings\2026-05-12\20260512-1700\</code> (date + name) as <code>chunk-*.wav</code> +
+<code>.json</code> + <code>.txt</code> + <code>.md</code> — and the repo tree stays clean if you rely on the config root.</p>
+<h3>Multilingual <code>ggml-base.bin</code>, config <code>transcribeLanguage: &quot;en&quot;</code>, and <code>--multilingual</code></h3>
+<p>On the first <strong><code>record</code></strong>, <strong><code>idle</code></strong>, or <strong><code>transcribe</code></strong> run, if <code>%USERPROFILE%\.localrecorder\config.json</code> is missing, LocalRecorder <strong>creates</strong> it with defaults (<code>models/ggml-base.en.bin</code> + <code>transcribeLanguage: &quot;en&quot;</code>). Adjust paths there or use <code>LOCALRECORDER_CONFIG</code>.</p>
+<ol>
+<li><p><strong><code>--multilingual</code></strong> uses <strong><code>models/ggml-base.bin</code></strong> (multilingual), <strong>downloads it if missing</strong> (~140 MB), and <strong>does not pass <code>-l</code></strong> to whisper (good for mixed languages). If you also pass <strong><code>--model</code></strong>, that file is used instead (still no <code>-l</code>).</p>
+</li>
+<li><p>Optional manual download: <code>npm run model:download-base</code></p>
+</li>
+<li><p>Copy <strong><code>docs/localrecorder-config.example.json</code></strong> as a starting point if you prefer to author the file yourself.</p>
+</li>
+</ol>
 <h2>When something goes wrong</h2>
 <table>
 <thead>
@@ -239,9 +292,14 @@ node src/index.js idle --root $env:LR_ROOT --name $(Get-Date -Format yyyyMMdd-HH
 <td>Raise <code>--silence</code> (longer pauses before rotating), or lower <code>--max-chunk-seconds</code>, or switch to a smaller model (<code>base.en</code> → <code>tiny.en</code>)</td>
 </tr>
 <tr>
-<td>Transcripts look like gibberish</td>
-<td>Wrong model for your accent / language</td>
-<td>Try <code>--model models/ggml-small.en.bin</code> or <code>ggml-medium.en.bin</code>; English models will not work for other languages — drop the <code>.en</code> for the multilingual variants</td>
+<td>Recording works but no <code>.txt</code> / <code>transcript.html</code></td>
+<td><code>record</code> without <code>--transcribe</code>, or idle with every chunk peak-gated</td>
+<td>Use <code>record … --transcribe</code> or <code>idle … --transcribe --transcribe-min-peak 0</code>; run with <code>--trace</code> to see the decision log</td>
+</tr>
+<tr>
+<td>Need to see why whisper never ran</td>
+<td>Opaque failure</td>
+<td><code>LOCALRECORDER_TRACE=1</code> or <code>--trace</code>; check stderr for <code>[finalize]</code>, <code>[queue]</code>, <code>[whisper]</code> stages</td>
 </tr>
 </tbody></table>
 <h2>Model trade-offs (when <code>base.en</code> isn&#39;t enough)</h2>
