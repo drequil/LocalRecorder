@@ -223,32 +223,24 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 #tab-content { flex: 1; overflow: hidden; position: relative; }
 .tab-pane { position: absolute; inset: 0; overflow-y: auto; padding: 16px; display: none; }
 .tab-pane.active { display: block; }
+#tab-live { padding: 8px 10px; }
 
 /* ---- Transcript feed ---- */
-#transcript-feed { display: flex; flex-direction: column; gap: 8px; }
+#transcript-feed { display: flex; flex-direction: column; gap: 2px; }
 
 .chunk-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px 12px;
+  border-radius: 4px;
+  padding: 4px 8px;
 }
-.chunk-card.status-pending  { border-left: 3px solid var(--text3); }
-.chunk-card.status-ok       { border-left: 3px solid var(--green); }
-.chunk-card.status-failed   { border-left: 3px solid var(--red); }
-.chunk-card.status-skipped  { border-left: 3px solid var(--text3); opacity: 0.6; }
+.chunk-card.status-pending  { border-left: 2px solid var(--text3); }
+.chunk-card.status-ok       { border-left: 2px solid var(--green); }
+.chunk-card.status-failed   { border-left: 2px solid var(--red); }
+.chunk-card.status-skipped  { border-left: 2px solid var(--text3); opacity: 0.6; }
 
-.chunk-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.chunk-name { font-size: 11px; font-family: var(--mono); color: var(--text2); }
-.chunk-peak { font-size: 11px; color: var(--text3); font-family: var(--mono); }
-.chunk-status { margin-left: auto; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
-.chunk-status.pending  { color: var(--text3); }
-.chunk-status.ok       { color: var(--green); }
-.chunk-status.failed   { color: var(--red); }
-.chunk-status.skipped  { color: var(--text3); }
-
-.chunk-text { font-size: 13px; color: var(--text); line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
-.chunk-text.empty { color: var(--text3); font-style: italic; }
+.chunk-text { font-size: 12px; color: var(--text); line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.chunk-text.empty { color: var(--text3); font-style: italic; font-size: 11px; }
 
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 8px; color: var(--text3); }
 .empty-state p { font-size: 13px; }
@@ -799,13 +791,8 @@ function addChunkCard({ name, wavPath, status, transcript }) {
   const card = document.createElement('div');
   card.className = `chunk-card status-${status || 'pending'}`;
   card.dataset.wav = wavPath;
-  card.innerHTML = `
-    <div class="chunk-meta">
-      <span class="chunk-name">${escHtml(name)}</span>
-      <span class="chunk-status ${status || 'pending'}">${status || 'pending'}</span>
-    </div>
-    <div class="chunk-text empty">transcribing…</div>
-  `;
+  card.title = name ? `${name} (${status || 'pending'})` : String(status || 'pending');
+  card.innerHTML = '<div class="chunk-text empty">transcribing…</div>';
   transcriptFeed.appendChild(card);
   chunkCards.set(wavPath, card);
 }
@@ -818,9 +805,7 @@ function updateChunkCard({ name, wavPath, status, transcript, error }) {
     card = chunkCards.get(wavPath);
   }
   card.className = `chunk-card status-${status}`;
-  const statusEl = card.querySelector('.chunk-status');
-  statusEl.textContent = status;
-  statusEl.className = `chunk-status ${status}`;
+  card.title = name ? `${name} (${status})` : String(status);
 
   const textEl = card.querySelector('.chunk-text');
   if (status === 'ok') {
