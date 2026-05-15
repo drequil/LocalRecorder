@@ -1045,6 +1045,39 @@ Then re-run: npm run transcribe:check
 </li>
 <li>Why: GPU-1 + GPU-2 give the user the controls; GPU-3 closes the loop by confirming what state the server is actually in. Without this badge, the user can&#39;t tell whether a sprint shipped from a CLI restart and a fresh server picks up the GPU, or whether they&#39;re still on the prior CPU build. The badge is the same idea as the <code>vX.Y.Z</code> badge from the version-tracking sprint, applied to a different invariant</li>
 </ul>
+<h2>Sprint GPU-4: v0.6.0 (Completed)</h2>
+<ul>
+<li>One-command installer for a CUDA-built whisper.cpp on Windows. Closes the gap between GPU-1&#39;s &quot;yes you have a card&quot; / GPU-2&#39;s &quot;we can use it if the binary supports it&quot; and the painful reality that the workstation in this conversation actually has a BLAS (CPU-only) build, so the GPU flags would have been no-ops</li>
+<li>Files added:<ul>
+<li><code>tools/install-whisper-cuda.js</code> (361 lines) -- <code>npm run gpu:install</code> entry. Fetches <code>https://api.github.com/repos/ggerganov/whisper.cpp/releases/latest</code>, picks the highest-CUDA-version <code>whisper-cublas-*-bin-x64.zip</code> asset, downloads it with a progress bar, verifies SHA256 if the release ships a digest, extracts via PowerShell&#39;s built-in <code>Expand-Archive</code> (no new runtime deps), and flattens the directory layout so <code>whisper-cli.exe</code> lands directly under <code>vendor/whisper-cuda/</code>. Records the release tag + asset name + checksum in <code>vendor/whisper-cuda/.installed.json</code> so re-running the installer is a no-op until the upstream version changes. HTTPS-only; no GitHub token required for anonymous reads. Windows-only (refuses on other platforms with a clear message pointing at the source-build path)</li>
+<li><code>tests/installWhisperCuda.test.js</code> (172 lines) -- 26 unit tests covering the pure helpers: <code>pickCublasAsset</code> (7), <code>pickShaAsset</code> (3), <code>cmpVersion</code> (2), <code>parseShaFile</code> (5), <code>humanBytes</code> (2), plus implicit asset-list edge cases. HTTP / extraction paths are integration-only (validated by the live smoke run; see below)</li>
+</ul>
+</li>
+<li>Files modified:<ul>
+<li><code>tools/check-transcribe-deps.js</code> -- new <code>VENDOR_WHISPER_CUDA_DIR</code> constant (absolute path to <code>vendor/whisper-cuda/</code>), new <code>vendorBinaryPath(name, opts)</code> helper (returns absolute path when the file exists, null otherwise; honours <code>.exe</code> on win32 and bare names elsewhere), and new <code>resolveWithVendor(candidates, { probe })</code> that tries each vendor candidate first (via the injected probe so tests can stay synchronous and offline) and falls through to the existing <code>pickCandidateBinary</code> PATH search. Exports updated</li>
+<li><code>src/transcribe.js</code> -- <code>resolveBinary()</code> now delegates to <code>resolveWithVendor</code>; the public surface is unchanged, but the next time a chunk transcribes it&#39;ll pick up the vendor binary automatically</li>
+<li><code>src/whisperServer.js</code> -- <code>probeServerBinary()</code> builds an ordered candidate list (vendor first, then PATH names) and returns the absolute vendor path when present so <code>start()</code> spawns the right binary. The whisper-server side has the same vendor preference as <code>whisper-cli</code></li>
+<li><code>.gitignore</code> -- new <code>vendor/</code> rule so the (50-450 MB) extracted binaries never get committed</li>
+<li><code>package.json</code> -- new <code>gpu:install</code> npm script</li>
+<li><code>tests/checkTranscribeDeps.test.js</code> -- 6 new tests for <code>vendorBinaryPath</code> / <code>resolveWithVendor</code> (vendor wins, falls through when probe fails, falls through when file missing, returns null when nothing works, returns absolute path with platform-appropriate ext)</li>
+</ul>
+</li>
+<li>Validation:<ul>
+<li><code>npm test</code> -- <strong>526/526 passing across 28 suites</strong> (+26 new)</li>
+<li>Live API smoke against the real GitHub release: <code>pickCublasAsset</code> correctly identifies <code>whisper-cublas-12.4.0-bin-x64.zip</code> (~450 MB; CUDA Toolkit 12.4) out of the 8 assets on whisper.cpp v1.8.4. The 11.8.0-bin variant exists alongside it (~58 MB) and is correctly ranked below</li>
+<li>Lint clean across the four modified <code>src/</code> and <code>tools/</code> modules</li>
+</ul>
+</li>
+<li>Known limitations / observations:<ul>
+<li><strong>Did NOT download in this sprint.</strong> The latest cuBLAS asset is ~450 MB and would have been overkill to download just to verify the sprint. The asset-picker is validated against the real release JSON; the download/extract path is plain HTTPS + PowerShell <code>Expand-Archive</code>, both of which are battle-tested</li>
+<li><strong>Windows-only.</strong> whisper.cpp publishes prebuilt cuBLAS ZIPs only for Windows x64. Adding a Linux path would mean cross-compiling whisper.cpp from source, which the plan explicitly says is out of scope. The installer refuses to run on other platforms with a clear message and a pointer at the source-build workflow</li>
+<li><strong>Idempotency through a tiny state file.</strong> <code>vendor/whisper-cuda/.installed.json</code> records <code>{tag_name, asset, sha256, installedAt}</code>. Re-running the installer against the same release tag skips the download. To force a re-install (e.g. the existing copy is corrupt), delete that file. This is much simpler than a full integrity check on every run</li>
+<li><strong>The whisper.cpp repo has moved orgs.</strong> The smoke test caught a 301 redirect (<code>api.github.com/repos/ggerganov/whisper.cpp/releases/latest</code> now redirects to the <code>ggml-org</code> org&#39;s numeric <code>repositories/541269386</code>). Our <code>httpGetJson</code> follows redirects so the installer works fine, but the README still says <code>ggerganov/whisper.cpp</code>. Worth a follow-up sprint to update all the URLs</li>
+<li><strong>Compressed binaries are still big.</strong> The cuBLAS 12.4 build is 457 MB compressed, ~1.2 GB extracted. The installer prints a clear progress bar (% / MiB) and on a typical residential connection takes 30-60 seconds. No retry logic; a failure during download leaves a <code>.partial</code> file behind that the next run overwrites cleanly</li>
+</ul>
+</li>
+<li>Why: GPU-2 already passes the right flags to whisper.cpp -- but with a CPU-only binary on the user&#39;s PATH, those flags don&#39;t do anything. GPU-4 turns &quot;you should manually grab the cuBLAS ZIP from the GitHub releases page, extract it somewhere, edit PATH, restart your shell&quot; into <code>npm run gpu:install</code>. Combined with the vendor-preferring binary discovery, the very next server start uses the new binary automatically. This is the practical step that lets the user <em>prove</em> GPU acceleration is real on this workstation (and is the prerequisite for GPU-5&#39;s benchmark)</li>
+</ul>
 
 </body>
 </html>

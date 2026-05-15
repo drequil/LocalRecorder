@@ -12,6 +12,12 @@ const path = require('path');
 // earlier whisper.cpp releases that some long-time users still keep on PATH.
 const WHISPER_CANDIDATES = ['whisper-cli', 'whisper', 'main'];
 
+// GPU-4: `npm run gpu:install` extracts a cuBLAS-enabled whisper.cpp build
+// here. Binary discovery prefers this directory over PATH so an installer
+// run wins the next time we resolve a binary -- no PATH editing required.
+// The directory is .gitignored.
+const VENDOR_WHISPER_CUDA_DIR = path.resolve(process.cwd(), 'vendor', 'whisper-cuda');
+
 function findOnPath(command, env = process.env) {
   const pathEnv = env.PATH || env.Path || '';
   if (!pathEnv) return null;
@@ -49,6 +55,35 @@ function probeBinary(command) {
     stdout: result.stdout || '',
     stderr: result.stderr || '',
   };
+}
+
+// GPU-4: look for `vendor/whisper-cuda/<name>.exe` (or unsuffixed on POSIX).
+// Returns the absolute path when present, null otherwise. Stat-only -- never
+// spawns; the caller decides whether to probe before committing.
+function vendorBinaryPath(name, { vendorDir = VENDOR_WHISPER_CUDA_DIR } = {}) {
+  const ext = process.platform === 'win32' ? '.exe' : '';
+  const candidate = path.join(vendorDir, name + ext);
+  try {
+    if (fs.statSync(candidate).isFile()) return candidate;
+  } catch (_) { /* not present */ }
+  return null;
+}
+
+// GPU-4: vendor-aware resolution. Tries `vendor/whisper-cuda/` first for each
+// candidate (and returns the absolute path so spawn doesn't have to re-resolve
+// via PATH), then falls back to the existing PATH-based discovery. The
+// returned identifier is whatever spawn() should be called with: an absolute
+// path when vendor wins, a bare name otherwise.
+function resolveWithVendor(candidates = WHISPER_CANDIDATES, { probe = probeBinary, vendorDir = VENDOR_WHISPER_CUDA_DIR } = {}) {
+  for (const name of candidates) {
+    const abs = vendorBinaryPath(name, { vendorDir });
+    if (abs) {
+      const res = probe(abs);
+      if (res && res.ok) return abs;
+    }
+  }
+  const pick = pickCandidateBinary(candidates, probe);
+  return pick.picked || null;
 }
 
 // Try each candidate in order. The first one that spawns and exits 0 wins. ENOENT just
@@ -172,10 +207,13 @@ if (require.main === module) {
 
 module.exports = {
   WHISPER_CANDIDATES,
+  VENDOR_WHISPER_CUDA_DIR,
   findOnPath,
   pickCandidateBinary,
   parseWhisperHelp,
   printInstallHints,
   probeBinary,
+  vendorBinaryPath,
+  resolveWithVendor,
   main,
 };

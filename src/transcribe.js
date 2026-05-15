@@ -21,6 +21,7 @@ const {
   WHISPER_CANDIDATES,
   pickCandidateBinary,
   probeBinary,
+  resolveWithVendor,
 } = require('../tools/check-transcribe-deps');
 const { trace } = require('./trace');
 
@@ -116,11 +117,12 @@ function buildWhisperArgs({
   return args;
 }
 
-// Discover the whisper.cpp CLI binary on PATH. Pure-ish — accepts a probe injector so
-// tests don't have to mock child_process.spawnSync at the module level.
+// Discover the whisper.cpp CLI binary. GPU-4: prefers `vendor/whisper-cuda/`
+// (where `npm run gpu:install` extracts a cuBLAS build) over PATH so an
+// installer run wins without the user editing PATH. Pure-ish — accepts a
+// probe injector so tests don't have to mock child_process.spawnSync.
 function resolveBinary({ probe = probeBinary, candidates = WHISPER_CANDIDATES } = {}) {
-  const pick = pickCandidateBinary(candidates, probe);
-  return pick.picked;
+  return resolveWithVendor(candidates, { probe });
 }
 
 // Read whichever of expectedTxtPaths(wav) exists. Returns { text, txtPath } or null

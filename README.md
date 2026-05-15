@@ -301,7 +301,24 @@ What gets recorded:
 
 Default (no flags) is unchanged: whisper.cpp's own build default decides, and the chunk artifacts look identical to v0.3.0.
 
-To actually install a CUDA-enabled whisper.cpp build on Windows: grab the cuBLAS release ZIP from <https://github.com/ggerganov/whisper.cpp/releases> (look for `whisper-bin-x64.cublas.zip` or similar) and put the folder containing `whisper-cli.exe` on your PATH. A future sprint (GPU-4) automates this via `npm run gpu:install`.
+To install a CUDA-enabled whisper.cpp build on Windows (one shot):
+
+```bash
+npm run gpu:install
+```
+
+That:
+
+1. Calls the GitHub API for `ggerganov/whisper.cpp`'s latest release.
+2. Picks the highest-CUDA-version `whisper-cublas-*-bin-x64.zip` asset (e.g. `whisper-cublas-12.4.0-bin-x64.zip`; ~450 MB).
+3. Downloads it into `vendor/whisper-cuda/`, verifies SHA256 if the release publishes a digest, and extracts.
+4. Records the release tag in `vendor/whisper-cuda/.installed.json` so re-running is a no-op until the upstream version changes.
+
+Binary discovery in this project prefers `vendor/whisper-cuda/whisper-cli.exe` and `vendor/whisper-cuda/whisper-server.exe` over PATH, so once the installer finishes the next `npm start` / `npm run ui` automatically uses the cuBLAS build. No PATH edits, no shell restart.
+
+`vendor/` is gitignored. The installer is Windows-only because whisper.cpp publishes prebuilt cuBLAS ZIPs only for Windows x64; on macOS / Linux, build whisper.cpp from source with CUDA support and either put it on PATH or copy into `vendor/whisper-cuda/` manually.
+
+Manual install fallback (if you want to pin a specific CUDA toolkit version): grab the ZIP from <https://github.com/ggerganov/whisper.cpp/releases> and extract into `vendor/whisper-cuda/`.
 
 ### Model trade-offs
 

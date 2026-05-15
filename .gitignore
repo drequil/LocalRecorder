@@ -18,6 +18,10 @@ models/*.bin
 # GPU runtimes, model archives). The project does not vendor binary deps.
 *.zip
 
+# GPU-4: `npm run gpu:install` extracts a cuBLAS-enabled whisper.cpp build
+# here. Per-user, ~50-200 MB, must never be committed.
+vendor/
+
 coverage/
 
 # Smoke-test scratch files (server stdout/stderr captures, etc).

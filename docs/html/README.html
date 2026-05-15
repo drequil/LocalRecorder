@@ -388,7 +388,19 @@ default), step up to a bigger model -- see the table below.</p>
 <li>The persistent <code>whisper-server</code> logs <code>[whisper-server] ready (GPU)</code> / <code>(CPU)</code> / <code>(default)</code> at startup.</li>
 </ul>
 <p>Default (no flags) is unchanged: whisper.cpp&#39;s own build default decides, and the chunk artifacts look identical to v0.3.0.</p>
-<p>To actually install a CUDA-enabled whisper.cpp build on Windows: grab the cuBLAS release ZIP from <a href="https://github.com/ggerganov/whisper.cpp/releases">https://github.com/ggerganov/whisper.cpp/releases</a> (look for <code>whisper-bin-x64.cublas.zip</code> or similar) and put the folder containing <code>whisper-cli.exe</code> on your PATH. A future sprint (GPU-4) automates this via <code>npm run gpu:install</code>.</p>
+<p>To install a CUDA-enabled whisper.cpp build on Windows (one shot):</p>
+<pre><code class="language-bash">npm run gpu:install
+</code></pre>
+<p>That:</p>
+<ol>
+<li>Calls the GitHub API for <code>ggerganov/whisper.cpp</code>&#39;s latest release.</li>
+<li>Picks the highest-CUDA-version <code>whisper-cublas-*-bin-x64.zip</code> asset (e.g. <code>whisper-cublas-12.4.0-bin-x64.zip</code>; ~450 MB).</li>
+<li>Downloads it into <code>vendor/whisper-cuda/</code>, verifies SHA256 if the release publishes a digest, and extracts.</li>
+<li>Records the release tag in <code>vendor/whisper-cuda/.installed.json</code> so re-running is a no-op until the upstream version changes.</li>
+</ol>
+<p>Binary discovery in this project prefers <code>vendor/whisper-cuda/whisper-cli.exe</code> and <code>vendor/whisper-cuda/whisper-server.exe</code> over PATH, so once the installer finishes the next <code>npm start</code> / <code>npm run ui</code> automatically uses the cuBLAS build. No PATH edits, no shell restart.</p>
+<p><code>vendor/</code> is gitignored. The installer is Windows-only because whisper.cpp publishes prebuilt cuBLAS ZIPs only for Windows x64; on macOS / Linux, build whisper.cpp from source with CUDA support and either put it on PATH or copy into <code>vendor/whisper-cuda/</code> manually.</p>
+<p>Manual install fallback (if you want to pin a specific CUDA toolkit version): grab the ZIP from <a href="https://github.com/ggerganov/whisper.cpp/releases">https://github.com/ggerganov/whisper.cpp/releases</a> and extract into <code>vendor/whisper-cuda/</code>.</p>
 <h3>Model trade-offs</h3>
 <p><code>whisper.cpp</code> ships multiple ggml models. Bigger = better accuracy but
 slower and more memory. The realtime ratios below are rough CPU estimates

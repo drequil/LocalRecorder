@@ -57,17 +57,29 @@ function buildServerArgs({ model, threads, port, gpu = null, gpuLayers = null })
   return args;
 }
 
+// GPU-4: prefer `vendor/whisper-cuda/` over PATH so an `npm run gpu:install`
+// run wins the next probe without the user touching PATH. Falls back to the
+// candidate name (PATH-resolved via spawnSync) when nothing's in vendor.
 function probeServerBinary(candidates) {
+  const { vendorBinaryPath } = require('../tools/check-transcribe-deps');
+  // Build a flat candidate list of {name, spawnTarget} to try in order.
+  // Vendor candidates come first so they win when present.
+  const ordered = [];
   for (const name of candidates) {
+    const abs = vendorBinaryPath(name);
+    if (abs) ordered.push({ name, spawnTarget: abs });
+  }
+  for (const name of candidates) ordered.push({ name, spawnTarget: name });
+  for (const { spawnTarget } of ordered) {
     try {
-      const r = spawnSync(name, ['--help'], {
+      const r = spawnSync(spawnTarget, ['--help'], {
         encoding: 'utf8',
         timeout: 2_000,
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
       });
       // spawnSync sets r.error on ENOENT / EACCES; absence means binary ran.
-      if (!r.error) return name;
+      if (!r.error) return spawnTarget;
     } catch (_) { /* ignore */ }
   }
   return null;

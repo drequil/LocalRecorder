@@ -4,10 +4,13 @@ const path = require('path');
 
 const {
   WHISPER_CANDIDATES,
+  VENDOR_WHISPER_CUDA_DIR,
   findOnPath,
   pickCandidateBinary,
   parseWhisperHelp,
   printInstallHints,
+  vendorBinaryPath,
+  resolveWithVendor,
 } = require('../tools/check-transcribe-deps');
 
 describe('WHISPER_CANDIDATES', () => {
@@ -180,5 +183,72 @@ describe('printInstallHints', () => {
       expect(out).toMatch(/git clone/);
       expect(out).toMatch(/make/);
     }
+  });
+});
+
+describe('vendorBinaryPath / resolveWithVendor (GPU-4)', () => {
+  let vendorTmp;
+
+  beforeAll(() => {
+    vendorTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lr-vendor-'));
+  });
+
+  afterAll(() => {
+    fs.rmSync(vendorTmp, { recursive: true, force: true });
+  });
+
+  test('VENDOR_WHISPER_CUDA_DIR points under vendor/whisper-cuda relative to cwd', () => {
+    // We don't assert the literal path because cwd varies; we assert structure.
+    expect(VENDOR_WHISPER_CUDA_DIR.endsWith(path.join('vendor', 'whisper-cuda'))).toBe(true);
+  });
+
+  test('vendorBinaryPath returns null when the file does not exist', () => {
+    expect(vendorBinaryPath('whisper-cli', { vendorDir: vendorTmp })).toBeNull();
+  });
+
+  test('vendorBinaryPath returns absolute path with .exe on win32, no ext elsewhere', () => {
+    const ext = process.platform === 'win32' ? '.exe' : '';
+    const target = path.join(vendorTmp, `whisper-cli${ext}`);
+    fs.writeFileSync(target, 'stub');
+    expect(vendorBinaryPath('whisper-cli', { vendorDir: vendorTmp })).toBe(target);
+  });
+
+  test('resolveWithVendor prefers a vendor binary that probes ok', () => {
+    const ext = process.platform === 'win32' ? '.exe' : '';
+    const target = path.join(vendorTmp, `whisper-cli${ext}`);
+    fs.writeFileSync(target, 'stub');
+    const probe = jest.fn((bin) => bin === target
+      ? { ok: true, status: 0, stdout: 'whisper.cpp 1.7.1\n' }
+      : { ok: true, status: 0, stdout: 'whisper.cpp from PATH' });
+    const out = resolveWithVendor(['whisper-cli'], { probe, vendorDir: vendorTmp });
+    expect(out).toBe(target);
+    expect(probe).toHaveBeenCalledWith(target);
+  });
+
+  test('resolveWithVendor falls through to PATH when vendor file is absent', () => {
+    const probe = jest.fn((bin) => bin === 'whisper-cli'
+      ? { ok: true, status: 0, stdout: 'whisper.cpp 1.7.1\n' }
+      : { ok: false, error: Object.assign(new Error('not found'), { code: 'ENOENT' }) });
+    const out = resolveWithVendor(['whisper-cli', 'whisper', 'main'], { probe, vendorDir: vendorTmp });
+    expect(out).toBe('whisper-cli');
+  });
+
+  test('resolveWithVendor falls through to PATH when vendor file exists but probe rejects it', () => {
+    const ext = process.platform === 'win32' ? '.exe' : '';
+    const target = path.join(vendorTmp, `whisper-cli${ext}`);
+    fs.writeFileSync(target, 'stub');
+    const probe = jest.fn((bin) => bin === target
+      ? { ok: false, error: Object.assign(new Error('exec format error'), { code: 'ENOEXEC' }) }
+      : bin === 'whisper-cli'
+        ? { ok: true, status: 0, stdout: 'whisper.cpp 1.7.1\n' }
+        : { ok: false, error: Object.assign(new Error('not found'), { code: 'ENOENT' }) });
+    const out = resolveWithVendor(['whisper-cli'], { probe, vendorDir: vendorTmp });
+    expect(out).toBe('whisper-cli');
+  });
+
+  test('resolveWithVendor returns null when neither vendor nor PATH yield a working binary', () => {
+    const probe = jest.fn(() => ({ ok: false, error: Object.assign(new Error('not found'), { code: 'ENOENT' }) }));
+    const out = resolveWithVendor(['whisper-cli'], { probe, vendorDir: vendorTmp });
+    expect(out).toBeNull();
   });
 });
