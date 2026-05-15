@@ -160,35 +160,34 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 }
 .toggle input:checked ~ .toggle-thumb { left: 15px; background: var(--accent); }
 
-/* Diary / speaker-label slider (binary off–on) */
-.diary-slider-row {
+/* Speaker labels: compact track; bold marks active end (Off vs On) */
+.speakers-slider-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   margin-top: 4px;
 }
-.diary-slider-row span {
+.speakers-end-label {
   font-size: 11px;
   color: var(--text3);
+  font-weight: 400;
   flex-shrink: 0;
-  min-width: 22px;
+  transition: color 0.12s ease, font-weight 0.12s ease;
 }
-.diary-slider-row span.diary-val {
-  min-width: 26px;
-  text-align: center;
-  color: var(--text2);
-  font-family: var(--mono);
+.speakers-end-label.is-active {
+  font-weight: 700;
+  color: var(--text);
 }
-#diary-slider {
-  flex: 1;
-  min-width: 0;
+#speakers-slider {
+  width: 52px;
+  flex-shrink: 0;
   height: 6px;
   border-radius: 999px;
   background: var(--surface2);
   accent-color: var(--accent);
   cursor: pointer;
 }
-#diary-slider:disabled {
+#speakers-slider:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -384,13 +383,12 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
           <span class="toggle-thumb"></span>
         </label>
       </div>
-      <div class="field" id="diary-field">
-        <label for="diary-slider">Diary</label>
-        <div class="diary-slider-row">
-          <span>Off</span>
-          <input type="range" id="diary-slider" min="0" max="1" step="1" value="1" aria-valuetext="on">
-          <span>On</span>
-          <span class="diary-val" id="diary-slider-val">On</span>
+      <div class="field" id="speakers-field">
+        <label for="speakers-slider">Speakers</label>
+        <div class="speakers-slider-row">
+          <span id="speakers-label-off" class="speakers-end-label">Off</span>
+          <input type="range" id="speakers-slider" min="0" max="1" step="1" value="1" aria-valuetext="on">
+          <span id="speakers-label-on" class="speakers-end-label is-active">On</span>
         </div>
       </div>
     </div>
@@ -498,12 +496,14 @@ const deviceSelect  = document.getElementById('device-select');
 const nameInput     = document.getElementById('name-input');
 const maxChunkInput = document.getElementById('max-chunk-input');
 const transcribeTog = document.getElementById('transcribe-toggle');
-const diarySlider = document.getElementById('diary-slider');
-const diarySliderVal = document.getElementById('diary-slider-val');
+const speakersSlider = document.getElementById('speakers-slider');
+const speakersLabelOff = document.getElementById('speakers-label-off');
+const speakersLabelOn = document.getElementById('speakers-label-on');
 const chunkFields   = document.getElementById('chunk-fields');
 const transcribeField = document.getElementById('transcribe-field');
-const diaryField = document.getElementById('diary-field');
-const DIARY_STORAGE_KEY = 'lr-ui-diary-on';
+const speakersField = document.getElementById('speakers-field');
+const SPEAKERS_STORAGE_KEY = 'lr-ui-speakers-on';
+const SPEAKERS_STORAGE_LEGACY = 'lr-ui-diary-on';
 const modePills     = document.querySelectorAll('.mode-pill');
 const meterBar      = document.getElementById('meter-bar');
 const meterDbEl     = document.getElementById('meter-db');
@@ -540,42 +540,48 @@ modePills.forEach((pill) => {
   });
 });
 
-function diarySliderOn() {
-  return diarySlider.value === '1';
+function speakersLabelsOn() {
+  return speakersSlider.value === '1';
 }
 
-function syncDiarySliderUi() {
-  const on = diarySliderOn();
-  diarySliderVal.textContent = on ? 'On' : 'Off';
-  diarySlider.setAttribute('aria-valuetext', on ? 'on' : 'off');
+function readSpeakersPreference() {
+  let v = localStorage.getItem(SPEAKERS_STORAGE_KEY);
+  if (v === null) v = localStorage.getItem(SPEAKERS_STORAGE_LEGACY);
+  return v === '0' ? '0' : '1';
 }
 
-function syncDiaryEnabledState() {
+function syncSpeakersSliderUi() {
+  const on = speakersLabelsOn();
+  speakersSlider.setAttribute('aria-valuetext', on ? 'on' : 'off');
+  speakersLabelOff.classList.toggle('is-active', !on);
+  speakersLabelOn.classList.toggle('is-active', on);
+}
+
+function syncSpeakersEnabledState() {
   const transcribeRelevant = appMode !== 'listen' && transcribeTog.checked;
-  diarySlider.disabled = !transcribeRelevant;
+  speakersSlider.disabled = !transcribeRelevant;
 }
 
 function updateModeUI() {
   chunkFields.style.display = appMode === 'chunk' ? '' : 'none';
   transcribeField.style.display = appMode === 'listen' ? 'none' : '';
-  diaryField.style.display = appMode === 'listen' ? 'none' : '';
-  syncDiaryEnabledState();
+  speakersField.style.display = appMode === 'listen' ? 'none' : '';
+  syncSpeakersEnabledState();
 }
 updateModeUI();
 
-(function initDiarySliderFromStorage() {
-  const saved = localStorage.getItem(DIARY_STORAGE_KEY);
-  diarySlider.value = saved === '0' ? '0' : '1';
-  syncDiarySliderUi();
+(function initSpeakersSliderFromStorage() {
+  speakersSlider.value = readSpeakersPreference();
+  syncSpeakersSliderUi();
 })();
 
-diarySlider.addEventListener('input', () => {
-  localStorage.setItem(DIARY_STORAGE_KEY, diarySlider.value === '1' ? '1' : '0');
-  syncDiarySliderUi();
+speakersSlider.addEventListener('input', () => {
+  localStorage.setItem(SPEAKERS_STORAGE_KEY, speakersSlider.value === '1' ? '1' : '0');
+  syncSpeakersSliderUi();
 });
 
 transcribeTog.addEventListener('change', () => {
-  syncDiaryEnabledState();
+  syncSpeakersEnabledState();
 });
 
 // ---- Record button ----------------------------------------------------
@@ -597,7 +603,7 @@ async function doStart() {
     root: rootInput.value.trim() || undefined,
     transcribe: appMode !== 'listen' ? transcribeTog.checked : false,
     transcribeSpeakerLabels:
-      appMode !== 'listen' && transcribeTog.checked ? diarySliderOn() : false,
+      appMode !== 'listen' && transcribeTog.checked ? speakersLabelsOn() : false,
     maxChunkSeconds: appMode === 'chunk' ? (parseInt(maxChunkInput.value, 10) || 30) : undefined,
   };
 
