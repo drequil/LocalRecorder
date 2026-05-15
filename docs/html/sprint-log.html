@@ -1078,6 +1078,35 @@ Then re-run: npm run transcribe:check
 </li>
 <li>Why: GPU-2 already passes the right flags to whisper.cpp -- but with a CPU-only binary on the user&#39;s PATH, those flags don&#39;t do anything. GPU-4 turns &quot;you should manually grab the cuBLAS ZIP from the GitHub releases page, extract it somewhere, edit PATH, restart your shell&quot; into <code>npm run gpu:install</code>. Combined with the vendor-preferring binary discovery, the very next server start uses the new binary automatically. This is the practical step that lets the user <em>prove</em> GPU acceleration is real on this workstation (and is the prerequisite for GPU-5&#39;s benchmark)</li>
 </ul>
+<h2>Sprint GPU-5: v0.7.0 (Completed)</h2>
+<ul>
+<li>The proof artifact. <code>npm run gpu:bench</code> runs the same synthetic WAV through whisper-cli twice (<code>--no-gpu</code> vs. the binary&#39;s GPU default) for each model under <code>models/*.bin</code> and reports the CPU mean / GPU mean / speedup ratio. Writes a committed human-readable summary and a gitignored per-run JSON dump</li>
+<li>Files added:<ul>
+<li><code>tools/bench-gpu.js</code> (319 lines) -- <code>npm run gpu:bench</code> entry. Generates a deterministic 10-second synthetic WAV using a seeded mulberry32 PRNG (no binary fixture committed to the repo). For each available model: one untimed warm-up + <code>--runs</code> (default 3) timed samples per side. Reports mean, median, min, max, realtime factor (RTF = audio_seconds / wall_clock_seconds), and speedup (CPU_mean / GPU_mean). CLI flags: <code>--runs N</code>, <code>--duration S</code>, <code>--threads N</code>, <code>--model PATH</code>. Writes <code>docs/gpu-bench-results.md</code> (committed, overwritten each run) and <code>recordings/.bench/bench-&lt;ts&gt;.json</code> (gitignored)</li>
+<li><code>tests/benchGpu.test.js</code> (193 lines) -- 22 unit tests covering the pure helpers: <code>mulberry32</code> (determinism + range), <code>generateBenchWav</code> (RIFF/WAVE header, byte counts, determinism, seed variance, return value), <code>summarise</code> (stats math, even/odd medians, single-sample), <code>realtimeFactor</code>, <code>speedup</code>, <code>formatResultsMarkdown</code> (empty/populated/CPU-only-build), <code>parseArgs</code> (defaults, flags, repeated --model, unknown flag). All offline -- no whisper.cpp invocation</li>
+<li><code>docs/gpu-bench-results.md</code> -- the actual workstation&#39;s first-run output (the file is overwritten on every <code>npm run gpu:bench</code> so this is just the starting state). On this machine, with the BLAS-bin-Win32 binary that GPU-1 warned about, the bench reports <code>base.en CPU RTF 1.46x  GPU RTF 1.49x  speedup 1.02x</code> -- exactly the diagnostic the bench was built to reveal: the binary <em>advertises</em> <code>--no-gpu</code> (which is why GPU-1 reports it as &quot;cuda capable&quot;) but the actual GPU/CPU speedup is ~1.0x, confirming it&#39;s CPU-only. After <code>npm run gpu:install</code> lands a real cuBLAS build, the user&#39;s next bench run will overwrite this with a real speedup table (typically 3-10x on a 4070 Ti)</li>
+</ul>
+</li>
+<li>Files modified:<ul>
+<li><code>package.json</code> -- new <code>gpu:bench</code> npm script; 0.6.0 -&gt; 0.7.0 minor bump</li>
+</ul>
+</li>
+<li>Validation:<ul>
+<li><code>npm test</code> -- <strong>548/548 passing across 29 suites</strong> (+22 new)</li>
+<li>End-to-end smoke on the workstation: <code>node tools/bench-gpu.js --runs 1 --duration 3 --model models/ggml-base.en.bin</code> produced a clean 8-second run, wrote the docs/json artifacts, summary matched the per-run output line. Confirmed timings hover around realtime for the base.en model on this machine</li>
+<li>The synthetic-WAV approach was validated by running the bench against <code>models/ggml-base.en.bin</code> and confirming whisper.cpp doesn&#39;t BLANK_AUDIO out (the AM-modulated harmonic stack provides enough spectral content that whisper.cpp&#39;s full decoder kicks in for the entire clip; without that, the timed work would be tiny and the comparison would be useless)</li>
+</ul>
+</li>
+<li>Known limitations / observations:<ul>
+<li><strong>The committed <code>docs/gpu-bench-results.md</code> is overwritten on every bench run.</strong> This is deliberate -- the file is <em>the report</em>, not source-of-truth metadata. The notes block inside the generated markdown explains how to read it so the file is self-documenting regardless of which run last wrote it</li>
+<li><strong>The first committed snapshot shows 1.02x speedup on this workstation.</strong> That&#39;s the BLAS build, not a regression. After GPU-4&#39;s installer runs, the actual cuBLAS build replaces it under <code>vendor/whisper-cuda/</code> and the next bench will show the real numbers (didn&#39;t run the installer in this sprint to avoid downloading 450 MB during automated work)</li>
+<li><strong>No micro-benchmarks for whisper-server.</strong> The bench tool uses the per-chunk <code>whisper-cli</code> path (via <code>transcribeFile</code>) because that&#39;s what isolates the GPU/CPU choice cleanly per run. The persistent <code>whisper-server</code> path can&#39;t change GPU mode mid-process, so benching it the same way would require a process restart per side, doubling complexity for marginal extra value</li>
+<li><strong>No CSV output.</strong> The JSON dump under <code>recordings/.bench/</code> keeps every per-sample timing; if a user wants to do further analysis they can read that file (it&#39;s structured). CSV is a downstream concern</li>
+<li><strong>Synthetic audio is not real speech.</strong> A future sprint could commit a short prerecorded TTS clip if we want absolute timings to be portable across runs; for now the determinism (same WAV every time) gives us within-run consistency, and the speedup ratio is independent of the input content</li>
+</ul>
+</li>
+<li>Why: GPU-4 lets the user <em>install</em> the right binary, but only this sprint can <em>prove</em> the install worked. The 1.02x speedup we see now is the smoking gun for the BLAS situation. Once a cuBLAS build lands under <code>vendor/whisper-cuda/</code>, the same <code>npm run gpu:bench</code> will rewrite the doc with the real numbers and the contrast will be undeniable. This is what makes the feature branch self-validating</li>
+</ul>
 
 </body>
 </html>

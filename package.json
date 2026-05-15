@@ -1,6 +1,6 @@
 {
   "name": "localrecorder",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Local-first AI memory and workflow assistant",
   "main": "src/index.js",
   "scripts": {
@@ -12,7 +12,8 @@
     "model:download-base": "node tools/download-ggml-base-bin.js",
     "transcribe:check": "node tools/check-transcribe-deps.js",
     "gpu:check": "node tools/check-gpu.js",
-    "gpu:install": "node tools/install-whisper-cuda.js"
+    "gpu:install": "node tools/install-whisper-cuda.js",
+    "gpu:bench": "node tools/bench-gpu.js"
   },
   "keywords": [
     "ai",
