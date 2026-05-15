@@ -35,19 +35,19 @@
 <ol>
 <li>All work must occur locally by default.</li>
 <li>Do NOT configure git remotes unless explicitly directed by the user.</li>
-<li>Do NOT push to origin unless explicitly directed by the user. When directed, push only the active branch and only after the sprint&#39;s local commit has been validated.</li>
+<li><strong>Commit and remote sync:</strong> When you complete a <strong>mini-sprint</strong>, a <strong>feature request (FR)</strong> deliverable, or a <strong>feature-branch (FB)</strong> scoped change, you must end with a <strong>local commit</strong> (after validation, version bump when applicable, and docs) <strong>and</strong> <strong><code>git push</code></strong> of the active branch to <strong><code>origin</code></strong> so shared state stays current—unless the user has asked to keep work local-only for this session or repo. For informal one-offs outside those scopes, <strong>commit</strong> when done but <strong>push</strong> only when the user explicitly directs (see <em>As-Directed Pushes</em> for edge cases).</li>
 <li>Do NOT create cloud dependencies unless explicitly instructed.</li>
 <li>Every sprint must end in a stable local commit, regardless of whether a push is also performed.</li>
 <li>Prefer small atomic changes over large refactors.</li>
 <li>Preserve existing working functionality whenever possible.</li>
 </ol>
 <h3>As-Directed Pushes</h3>
-<p>When the user explicitly authorizes pushing:</p>
+<p>When pushes are <strong>not</strong> already required by rule 3 above (e.g. ad-hoc edits, hotfixes, or the user has opted out of automatic pushes), <strong>push only when the user explicitly directs.</strong> Before pushing:</p>
 <ul>
 <li>Confirm the target remote and branch before pushing.</li>
 <li>Push only the active branch (no <code>--all</code>, no force pushes).</li>
 <li>Never reconfigure existing remotes or change default branches without explicit direction.</li>
-<li>Treat each authorization as scoped to the current sprint unless the user says otherwise.</li>
+<li>Treat each authorization as scoped to the current task unless the user says otherwise.</li>
 <li>Local commit and validation steps remain mandatory before any push.</li>
 </ul>
 <hr>
@@ -187,6 +187,10 @@
 </tr>
 </thead>
 <tbody><tr>
+<td>0.8.2</td>
+<td><code>.instructions.md</code>: commit + push cadence for mini-sprint / FR / FB</td>
+</tr>
+<tr>
 <td>0.2.0</td>
 <td>Local web UI (Express + WebSocket), peak meter, live transcript, session browser</td>
 </tr>
@@ -206,7 +210,15 @@
 <li>[sprint-2] v0.1.1 fix chunked whisper transcription ordering</li>
 <li>[sprint-3] v0.2.0 add local web UI</li>
 </ul>
-<p>Do NOT push by default. Only push when explicitly directed by the user per the As-Directed Pushes rule above.</p>
+<p>Do NOT push by default for <strong>non-sprint / non-FR / non-FB</strong> edits unless the user directs. For sprint / FR / FB work, rule 3 already requires push unless opted out.</p>
+<hr>
+<h2>(10) Push to origin</h2>
+<p>If rule 3 applies (mini-sprint, FR, or FB change committed in step 9):</p>
+<ul>
+<li>Run <code>git push</code> (or <code>git push -u origin &lt;branch&gt;</code> on first publish for that branch) after the commit.</li>
+<li>Do not force-push or <code>--all</code> unless the user explicitly asks.</li>
+</ul>
+<p>If rule 3 does <strong>not</strong> apply, push only when the user directs (<em>As-Directed Pushes</em>).</p>
 <hr>
 <h1>Development Philosophy</h1>
 <p>Prefer:</p>
