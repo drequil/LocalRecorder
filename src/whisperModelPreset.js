@@ -33,12 +33,19 @@ const MODEL_PROBE_ORDER = [
   'ggml-base.bin',
 ];
 
+const TINYDIARIZE_MODEL_BASENAME = 'ggml-small.en-tdrz.bin';
+
 function resolveBestAvailableModel(cwd = process.cwd(), fsImpl = fs) {
   for (const basename of MODEL_PROBE_ORDER) {
     const abs = path.resolve(cwd, 'models', basename);
     if (fsImpl.existsSync(abs)) return abs;
   }
   return path.resolve(cwd, 'models', 'ggml-base.en.bin');
+}
+
+function resolveTinydiarizeModel(cwd = process.cwd(), fsImpl = fs) {
+  const abs = path.resolve(cwd, 'models', TINYDIARIZE_MODEL_BASENAME);
+  return fsImpl.existsSync(abs) ? abs : null;
 }
 
 /** Mutually exclusive --medium / --large → { transcribeModelPreset } or { error }. */
@@ -54,8 +61,10 @@ module.exports = {
   HF_WHISPER_CPP_MODELS,
   TRANSCRIBE_MODEL_PRESET_FILES,
   MODEL_PROBE_ORDER,
+  TINYDIARIZE_MODEL_BASENAME,
   defaultMultilingualBasename,
   resolvePresetModelAbs,
   parsePresetFlags,
   resolveBestAvailableModel,
+  resolveTinydiarizeModel,
 };

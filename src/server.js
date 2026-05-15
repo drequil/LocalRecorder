@@ -9,7 +9,7 @@ const { effectiveRecordingsRoot, loadUserConfig, ensureDefaultUserConfigIfMissin
 const { resolveRecordPath, resolveIdleDirectory } = require('./recordingPaths');
 const { DEFAULT_MODEL_PATH, resolveBinary, resolveSpeakerLabelMode } = require('./transcribe');
 const { getWhisperCliCapabilities } = require('./whisperCliCapabilities');
-const { resolveBestAvailableModel } = require('./whisperModelPreset');
+const { resolveBestAvailableModel, resolveTinydiarizeModel } = require('./whisperModelPreset');
 const { WhisperServer } = require('./whisperServer');
 const { detectGpu } = require('../tools/check-gpu');
 const {
@@ -88,6 +88,7 @@ function getSpeakerLabelsCapabilityPayload() {
   return {
     monoSupported: mode === 'tinydiarize',
     whisperCliPresent: true,
+    modelPath: resolveTinydiarizeModel(process.cwd()) || null,
     caps: {
       tinydiarize: caps.tinydiarize,
       outputJson: caps.outputJson,
@@ -366,7 +367,10 @@ app.post('/api/start', async (req, res) => {
     return res.status(500).json({ error: `Cannot create session dir: ${err.message}` });
   }
 
-  const model = userCfg.transcribeModel || DEFAULT_MODEL_PATH;
+  const speakerLabelsRequested = mode !== 'listen' && transcribeSpeakerLabelsBody !== false;
+  const configuredModel = userCfg.transcribeModel || DEFAULT_MODEL_PATH;
+  const tinydiarizeModel = speakerLabelsRequested ? resolveTinydiarizeModel(process.cwd()) : null;
+  const model = tinydiarizeModel || configuredModel;
   const modelAbs = path.isAbsolute(model) ? model : path.resolve(process.cwd(), model);
   const modelExists = fs.existsSync(modelAbs);
 
@@ -411,7 +415,8 @@ app.post('/api/start', async (req, res) => {
   state.chunks = [];
   console.log(
     `Transcribe        →  ${state.transcribeEnabled ? 'on' : 'off'}; ` +
-    `Speakers → ${state.speakerLabelsEnabled ? 'on' : 'off'}`,
+    `Speakers → ${state.speakerLabelsEnabled ? 'on' : 'off'}; ` +
+    `Model → ${path.basename(model)}`,
   );
 
   // Broadcast 'started' BEFORE calling the recorder so that clients clear

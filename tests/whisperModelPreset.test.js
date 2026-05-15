@@ -1,5 +1,13 @@
 const path = require('path');
-const { parsePresetFlags, resolvePresetModelAbs, defaultMultilingualBasename, resolveBestAvailableModel, MODEL_PROBE_ORDER } = require('../src/whisperModelPreset');
+const {
+  parsePresetFlags,
+  resolvePresetModelAbs,
+  defaultMultilingualBasename,
+  resolveBestAvailableModel,
+  resolveTinydiarizeModel,
+  MODEL_PROBE_ORDER,
+  TINYDIARIZE_MODEL_BASENAME,
+} = require('../src/whisperModelPreset');
 
 describe('parsePresetFlags', () => {
   test('returns null preset when neither flag', () => {
@@ -77,5 +85,26 @@ describe('resolveBestAvailableModel', () => {
     expect(resolveBestAvailableModel(cwd, fsImpl)).toBe(
       path.normalize(path.resolve(cwd, 'models', 'ggml-base.en.bin')),
     );
+  });
+});
+
+describe('resolveTinydiarizeModel', () => {
+  const cwd = 'D:/proj';
+
+  function makeFsImpl(...existingBasenames) {
+    const existing = new Set(
+      existingBasenames.map((b) => path.normalize(path.resolve(cwd, 'models', b))),
+    );
+    return { existsSync: (p) => existing.has(path.normalize(p)) };
+  }
+
+  test('returns small.en-tdrz when available', () => {
+    expect(resolveTinydiarizeModel(cwd, makeFsImpl(TINYDIARIZE_MODEL_BASENAME))).toBe(
+      path.normalize(path.resolve(cwd, 'models', TINYDIARIZE_MODEL_BASENAME)),
+    );
+  });
+
+  test('returns null when small.en-tdrz is missing', () => {
+    expect(resolveTinydiarizeModel(cwd, makeFsImpl('ggml-large-v3.bin'))).toBeNull();
   });
 });
