@@ -206,11 +206,13 @@ app.get('/api/info', (_req, res) => {
   res.json(getServerInfo());
 });
 
+const { version: SERVER_VERSION } = require('../package.json');
+
 app.get('/api/config', (_req, res) => {
   ensureDefaultUserConfigIfMissing();
   const userCfg = loadUserConfig();
   const root = getRecordingsRoot();
-  res.json({ recordingsRoot: root, configPath: userCfg.configPath });
+  res.json({ recordingsRoot: root, configPath: userCfg.configPath, version: SERVER_VERSION });
 });
 
 app.get('/api/status', (_req, res) => {
@@ -327,6 +329,14 @@ app.post('/api/start', async (req, res) => {
   state.queueDepth = 0;
   state.chunks = [];
 
+  // Broadcast 'started' BEFORE calling the recorder so that clients clear
+  // their transcript feed before the very first chunk_started event arrives.
+  // Both messages travel over the same WebSocket connection and are delivered
+  // in order; starting the recorder synchronously after the broadcast ensures
+  // chunk_started always follows started, never precedes it.
+  startStatusBroadcast();
+  broadcast({ type: 'started', mode, sessionDir, transcribeEnabled: state.transcribeEnabled });
+
   try {
     if (mode === 'record') {
       recorder.start(recordTarget);
@@ -345,8 +355,6 @@ app.post('/api/start', async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 
-  startStatusBroadcast();
-  broadcast({ type: 'started', mode, sessionDir, transcribeEnabled: state.transcribeEnabled });
   res.json({ ok: true, mode, sessionDir, transcribeEnabled: state.transcribeEnabled });
 });
 
@@ -381,14 +389,17 @@ app.post('/api/stop', (req, res) => {
 // ---- WebSocket connection -------------------------------------------------
 
 wss.on('connection', (ws) => {
+  // Full snapshot so a browser connecting mid-session can reconstruct the
+  // transcript feed in correct start order without replaying missed events.
   ws.send(JSON.stringify({
-    type: 'status',
+    type: 'sync',
     mode: state.mode,
     elapsed: state.startedAt ? Date.now() - state.startedAt : 0,
     chunkCount: state.chunkCount,
     sessionDir: state.sessionDir,
     transcribeEnabled: state.transcribeEnabled,
     queueDepth: state.queueDepth,
+    chunks: state.chunks.slice(),
   }));
   // Send model/binary info immediately after the status snapshot.
   ws.send(JSON.stringify({ type: 'server_info', ...getServerInfo() }));
