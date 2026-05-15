@@ -1,0 +1,284 @@
+{
+	"systeminfo": "WHISPER : COREML = 0 | OPENVINO = 0 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | OPENMP = 1 | REPACK = 1 | ",
+	"model": {
+		"type": "small",
+		"multilingual": false,
+		"vocab": 51864,
+		"audio": {
+			"ctx": 1500,
+			"state": 768,
+			"head": 12,
+			"layer": 12
+		},
+		"text": {
+			"ctx": 448,
+			"state": 768,
+			"head": 12,
+			"layer": 12
+		},
+		"mels": 80,
+		"ftype": 1
+	},
+	"params": {
+		"model": "models/ggml-small.en-tdrz.bin",
+		"language": "en",
+		"translate": false
+	},
+	"result": {
+		"language": "en"
+	},
+	"transcription": [
+		{
+			"timestamps": {
+				"from": "00:00:00,000",
+				"to": "00:00:04,680"
+			},
+			"offsets": {
+				"from": 0,
+				"to": 4680
+			},
+			"text": " Cashew, come here. Cashew, almost time for a walk.",
+			"tokens": [
+				{
+					"text": "[_BEG_]",
+					"timestamps": {
+						"from": "00:00:00,000",
+						"to": "00:00:00,000"
+					},
+					"offsets": {
+						"from": 0,
+						"to": 0
+					},
+					"id": 50363,
+					"p": 0.909612,
+					"t_dtw": -1
+				},
+				{
+					"text": " Cas",
+					"timestamps": {
+						"from": "00:00:00,170",
+						"to": "00:00:00,310"
+					},
+					"offsets": {
+						"from": 170,
+						"to": 310
+					},
+					"id": 11294,
+					"p": 0.775526,
+					"t_dtw": -1
+				},
+				{
+					"text": "hew",
+					"timestamps": {
+						"from": "00:00:00,310",
+						"to": "00:00:00,580"
+					},
+					"offsets": {
+						"from": 310,
+						"to": 580
+					},
+					"id": 6391,
+					"p": 0.988726,
+					"t_dtw": -1
+				},
+				{
+					"text": ",",
+					"timestamps": {
+						"from": "00:00:00,830",
+						"to": "00:00:00,830"
+					},
+					"offsets": {
+						"from": 830,
+						"to": 830
+					},
+					"id": 11,
+					"p": 0.621994,
+					"t_dtw": -1
+				},
+				{
+					"text": " come",
+					"timestamps": {
+						"from": "00:00:01,040",
+						"to": "00:00:01,250"
+					},
+					"offsets": {
+						"from": 1040,
+						"to": 1250
+					},
+					"id": 1282,
+					"p": 0.991312,
+					"t_dtw": -1
+				},
+				{
+					"text": " here",
+					"timestamps": {
+						"from": "00:00:01,250",
+						"to": "00:00:01,550"
+					},
+					"offsets": {
+						"from": 1250,
+						"to": 1550
+					},
+					"id": 994,
+					"p": 0.994476,
+					"t_dtw": -1
+				},
+				{
+					"text": ".",
+					"timestamps": {
+						"from": "00:00:01,970",
+						"to": "00:00:01,970"
+					},
+					"offsets": {
+						"from": 1970,
+						"to": 1970
+					},
+					"id": 13,
+					"p": 0.524225,
+					"t_dtw": -1
+				},
+				{
+					"text": " Cas",
+					"timestamps": {
+						"from": "00:00:01,970",
+						"to": "00:00:02,240"
+					},
+					"offsets": {
+						"from": 1970,
+						"to": 2240
+					},
+					"id": 11294,
+					"p": 0.886963,
+					"t_dtw": -1
+				},
+				{
+					"text": "hew",
+					"timestamps": {
+						"from": "00:00:02,450",
+						"to": "00:00:02,510"
+					},
+					"offsets": {
+						"from": 2450,
+						"to": 2510
+					},
+					"id": 6391,
+					"p": 0.99814,
+					"t_dtw": -1
+				},
+				{
+					"text": ",",
+					"timestamps": {
+						"from": "00:00:02,510",
+						"to": "00:00:02,690"
+					},
+					"offsets": {
+						"from": 2510,
+						"to": 2690
+					},
+					"id": 11,
+					"p": 0.837467,
+					"t_dtw": -1
+				},
+				{
+					"text": " almost",
+					"timestamps": {
+						"from": "00:00:02,690",
+						"to": "00:00:02,940"
+					},
+					"offsets": {
+						"from": 2690,
+						"to": 2940
+					},
+					"id": 2048,
+					"p": 0.992483,
+					"t_dtw": -1
+				},
+				{
+					"text": " time",
+					"timestamps": {
+						"from": "00:00:03,360",
+						"to": "00:00:03,610"
+					},
+					"offsets": {
+						"from": 3360,
+						"to": 3610
+					},
+					"id": 640,
+					"p": 0.997999,
+					"t_dtw": -1
+				},
+				{
+					"text": " for",
+					"timestamps": {
+						"from": "00:00:03,610",
+						"to": "00:00:03,880"
+					},
+					"offsets": {
+						"from": 3610,
+						"to": 3880
+					},
+					"id": 329,
+					"p": 0.999714,
+					"t_dtw": -1
+				},
+				{
+					"text": " a",
+					"timestamps": {
+						"from": "00:00:03,880",
+						"to": "00:00:03,970"
+					},
+					"offsets": {
+						"from": 3880,
+						"to": 3970
+					},
+					"id": 257,
+					"p": 0.999542,
+					"t_dtw": -1
+				},
+				{
+					"text": " walk",
+					"timestamps": {
+						"from": "00:00:03,970",
+						"to": "00:00:04,340"
+					},
+					"offsets": {
+						"from": 3970,
+						"to": 4340
+					},
+					"id": 2513,
+					"p": 0.994547,
+					"t_dtw": -1
+				},
+				{
+					"text": ".",
+					"timestamps": {
+						"from": "00:00:04,340",
+						"to": "00:00:04,650"
+					},
+					"offsets": {
+						"from": 4340,
+						"to": 4650
+					},
+					"id": 13,
+					"p": 0.970414,
+					"t_dtw": -1
+				},
+				{
+					"text": "[_TT_234]",
+					"timestamps": {
+						"from": "00:00:04,680",
+						"to": "00:00:04,680"
+					},
+					"offsets": {
+						"from": 4680,
+						"to": 4680
+					},
+					"id": 50597,
+					"p": 0.0363915,
+					"t_dtw": -1
+				}
+			],
+			"speaker_turn_next": false
+		}
+	]
+}

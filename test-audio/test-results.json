@@ -1,0 +1,54 @@
+[
+  {
+    "wav": "test-audio/david-zira-piano.wav",
+    "speakerLabelMode": "tinydiarize",
+    "jsonPath": "test-audio/david-zira-piano.wav.json",
+    "text": "Speaker 1: A_J_ you, need to do some piano. Yes, please finish it soon.",
+    "turns": [
+      {
+        "text": "A_J_ you, need to do some piano.",
+        "speaker_turn_next": false
+      },
+      {
+        "text": "Yes, please finish it soon.",
+        "speaker_turn_next": false
+      }
+    ]
+  },
+  {
+    "wav": "test-audio/downloaded-two-speakers.wav",
+    "speakerLabelMode": "tinydiarize",
+    "jsonPath": "test-audio/downloaded-two-speakers.wav.json",
+    "text": "Speaker 1: Author of The Danger Trail, Philip Steeles, etcetera. Not at this particular case Tom, apologized Whitmore. Author of The Danger Trail, Philip Steeles, etcetera. Not at this particular case Tom, apologized Whitmore.",
+    "turns": [
+      {
+        "text": "Author of The Danger Trail, Philip Steeles, etcetera.",
+        "speaker_turn_next": false
+      },
+      {
+        "text": "Not at this particular case Tom, apologized Whitmore.",
+        "speaker_turn_next": false
+      },
+      {
+        "text": "Author of The Danger Trail, Philip Steeles, etcetera.",
+        "speaker_turn_next": false
+      },
+      {
+        "text": "Not at this particular case Tom, apologized Whitmore.",
+        "speaker_turn_next": false
+      }
+    ]
+  },
+  {
+    "wav": "test-audio/cashew-walk-16k.wav",
+    "speakerLabelMode": "tinydiarize",
+    "jsonPath": "test-audio/cashew-walk-16k.wav.json",
+    "text": "Speaker 1: Cashew, come here. Cashew, almost time for a walk.",
+    "turns": [
+      {
+        "text": "Cashew, come here. Cashew, almost time for a walk.",
+        "speaker_turn_next": false
+      }
+    ]
+  }
+]

@@ -1,0 +1,858 @@
+{
+	"systeminfo": "WHISPER : COREML = 0 | OPENVINO = 0 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | OPENMP = 1 | REPACK = 1 | ",
+	"model": {
+		"type": "small",
+		"multilingual": false,
+		"vocab": 51864,
+		"audio": {
+			"ctx": 1500,
+			"state": 768,
+			"head": 12,
+			"layer": 12
+		},
+		"text": {
+			"ctx": 448,
+			"state": 768,
+			"head": 12,
+			"layer": 12
+		},
+		"mels": 80,
+		"ftype": 1
+	},
+	"params": {
+		"model": "models/ggml-small.en-tdrz.bin",
+		"language": "en",
+		"translate": false
+	},
+	"result": {
+		"language": "en"
+	},
+	"transcription": [
+		{
+			"timestamps": {
+				"from": "00:00:00,000",
+				"to": "00:00:03,240"
+			},
+			"offsets": {
+				"from": 0,
+				"to": 3240
+			},
+			"text": " Author of The Danger Trail, Philip Steeles, etcetera.",
+			"tokens": [
+				{
+					"text": "[_BEG_]",
+					"timestamps": {
+						"from": "00:00:00,000",
+						"to": "00:00:00,000"
+					},
+					"offsets": {
+						"from": 0,
+						"to": 0
+					},
+					"id": 50363,
+					"p": 0.896529,
+					"t_dtw": -1
+				},
+				{
+					"text": " Author",
+					"timestamps": {
+						"from": "00:00:00,060",
+						"to": "00:00:00,400"
+					},
+					"offsets": {
+						"from": 60,
+						"to": 400
+					},
+					"id": 6434,
+					"p": 0.847578,
+					"t_dtw": -1
+				},
+				{
+					"text": " of",
+					"timestamps": {
+						"from": "00:00:00,400",
+						"to": "00:00:00,480"
+					},
+					"offsets": {
+						"from": 400,
+						"to": 480
+					},
+					"id": 286,
+					"p": 0.997128,
+					"t_dtw": -1
+				},
+				{
+					"text": " The",
+					"timestamps": {
+						"from": "00:00:00,570",
+						"to": "00:00:00,730"
+					},
+					"offsets": {
+						"from": 570,
+						"to": 730
+					},
+					"id": 383,
+					"p": 0.607508,
+					"t_dtw": -1
+				},
+				{
+					"text": " Danger",
+					"timestamps": {
+						"from": "00:00:00,730",
+						"to": "00:00:01,070"
+					},
+					"offsets": {
+						"from": 730,
+						"to": 1070
+					},
+					"id": 20419,
+					"p": 0.987233,
+					"t_dtw": -1
+				},
+				{
+					"text": " Trail",
+					"timestamps": {
+						"from": "00:00:01,140",
+						"to": "00:00:01,460"
+					},
+					"offsets": {
+						"from": 1140,
+						"to": 1460
+					},
+					"id": 13069,
+					"p": 0.750595,
+					"t_dtw": -1
+				},
+				{
+					"text": ",",
+					"timestamps": {
+						"from": "00:00:01,460",
+						"to": "00:00:01,550"
+					},
+					"offsets": {
+						"from": 1460,
+						"to": 1550
+					},
+					"id": 11,
+					"p": 0.635868,
+					"t_dtw": -1
+				},
+				{
+					"text": " Philip",
+					"timestamps": {
+						"from": "00:00:01,720",
+						"to": "00:00:01,910"
+					},
+					"offsets": {
+						"from": 1720,
+						"to": 1910
+					},
+					"id": 14576,
+					"p": 0.791287,
+					"t_dtw": -1
+				},
+				{
+					"text": " Steel",
+					"timestamps": {
+						"from": "00:00:02,000",
+						"to": "00:00:02,320"
+					},
+					"offsets": {
+						"from": 2000,
+						"to": 2320
+					},
+					"id": 7851,
+					"p": 0.343749,
+					"t_dtw": -1
+				},
+				{
+					"text": "es",
+					"timestamps": {
+						"from": "00:00:02,320",
+						"to": "00:00:02,440"
+					},
+					"offsets": {
+						"from": 2320,
+						"to": 2440
+					},
+					"id": 274,
+					"p": 0.998919,
+					"t_dtw": -1
+				},
+				{
+					"text": ",",
+					"timestamps": {
+						"from": "00:00:02,440",
+						"to": "00:00:02,570"
+					},
+					"offsets": {
+						"from": 2440,
+						"to": 2570
+					},
+					"id": 11,
+					"p": 0.803207,
+					"t_dtw": -1
+				},
+				{
+					"text": " etc",
+					"timestamps": {
+						"from": "00:00:02,580",
+						"to": "00:00:02,780"
+					},
+					"offsets": {
+						"from": 2580,
+						"to": 2780
+					},
+					"id": 3503,
+					"p": 0.817568,
+					"t_dtw": -1
+				},
+				{
+					"text": "eter",
+					"timestamps": {
+						"from": "00:00:02,780",
+						"to": "00:00:03,030"
+					},
+					"offsets": {
+						"from": 2780,
+						"to": 3030
+					},
+					"id": 2357,
+					"p": 0.974407,
+					"t_dtw": -1
+				},
+				{
+					"text": "a",
+					"timestamps": {
+						"from": "00:00:03,030",
+						"to": "00:00:03,130"
+					},
+					"offsets": {
+						"from": 3030,
+						"to": 3130
+					},
+					"id": 64,
+					"p": 0.999937,
+					"t_dtw": -1
+				},
+				{
+					"text": ".",
+					"timestamps": {
+						"from": "00:00:03,240",
+						"to": "00:00:03,240"
+					},
+					"offsets": {
+						"from": 3240,
+						"to": 3240
+					},
+					"id": 13,
+					"p": 0.950478,
+					"t_dtw": -1
+				},
+				{
+					"text": "[_TT_162]",
+					"timestamps": {
+						"from": "00:00:03,240",
+						"to": "00:00:03,240"
+					},
+					"offsets": {
+						"from": 3240,
+						"to": 3240
+					},
+					"id": 50525,
+					"p": 0.146122,
+					"t_dtw": -1
+				}
+			],
+			"speaker_turn_next": false
+		},
+		{
+			"timestamps": {
+				"from": "00:00:03,240",
+				"to": "00:00:07,620"
+			},
+			"offsets": {
+				"from": 3240,
+				"to": 7620
+			},
+			"text": " Not at this particular case Tom, apologized Whitmore.",
+			"tokens": [
+				{
+					"text": " Not",
+					"timestamps": {
+						"from": "00:00:03,300",
+						"to": "00:00:03,460"
+					},
+					"offsets": {
+						"from": 3300,
+						"to": 3460
+					},
+					"id": 1892,
+					"p": 0.997573,
+					"t_dtw": -1
+				},
+				{
+					"text": " at",
+					"timestamps": {
+						"from": "00:00:03,540",
+						"to": "00:00:03,670"
+					},
+					"offsets": {
+						"from": 3540,
+						"to": 3670
+					},
+					"id": 379,
+					"p": 0.998974,
+					"t_dtw": -1
+				},
+				{
+					"text": " this",
+					"timestamps": {
+						"from": "00:00:03,670",
+						"to": "00:00:04,020"
+					},
+					"offsets": {
+						"from": 3670,
+						"to": 4020
+					},
+					"id": 428,
+					"p": 0.999847,
+					"t_dtw": -1
+				},
+				{
+					"text": " particular",
+					"timestamps": {
+						"from": "00:00:04,020",
+						"to": "00:00:04,770"
+					},
+					"offsets": {
+						"from": 4020,
+						"to": 4770
+					},
+					"id": 1948,
+					"p": 0.999859,
+					"t_dtw": -1
+				},
+				{
+					"text": " case",
+					"timestamps": {
+						"from": "00:00:04,960",
+						"to": "00:00:05,260"
+					},
+					"offsets": {
+						"from": 4960,
+						"to": 5260
+					},
+					"id": 1339,
+					"p": 0.99942,
+					"t_dtw": -1
+				},
+				{
+					"text": " Tom",
+					"timestamps": {
+						"from": "00:00:05,260",
+						"to": "00:00:05,520"
+					},
+					"offsets": {
+						"from": 5260,
+						"to": 5520
+					},
+					"id": 4186,
+					"p": 0.537976,
+					"t_dtw": -1
+				},
+				{
+					"text": ",",
+					"timestamps": {
+						"from": "00:00:05,520",
+						"to": "00:00:05,680"
+					},
+					"offsets": {
+						"from": 5520,
+						"to": 5680
+					},
+					"id": 11,
+					"p": 0.932252,
+					"t_dtw": -1
+				},
+				{
+					"text": " apologized",
+					"timestamps": {
+						"from": "00:00:05,680",
+						"to": "00:00:06,370"
+					},
+					"offsets": {
+						"from": 5680,
+						"to": 6370
+					},
+					"id": 22893,
+					"p": 0.455299,
+					"t_dtw": -1
+				},
+				{
+					"text": " Whit",
+					"timestamps": {
+						"from": "00:00:06,570",
+						"to": "00:00:06,930"
+					},
+					"offsets": {
+						"from": 6570,
+						"to": 6930
+					},
+					"id": 13183,
+					"p": 0.93602,
+					"t_dtw": -1
+				},
+				{
+					"text": "more",
+					"timestamps": {
+						"from": "00:00:07,220",
+						"to": "00:00:07,280"
+					},
+					"offsets": {
+						"from": 7220,
+						"to": 7280
+					},
+					"id": 3549,
+					"p": 0.989087,
+					"t_dtw": -1
+				},
+				{
+					"text": ".",
+					"timestamps": {
+						"from": "00:00:07,440",
+						"to": "00:00:07,620"
+					},
+					"offsets": {
+						"from": 7440,
+						"to": 7620
+					},
+					"id": 13,
+					"p": 0.9934,
+					"t_dtw": -1
+				},
+				{
+					"text": "[_TT_381]",
+					"timestamps": {
+						"from": "00:00:07,620",
+						"to": "00:00:07,620"
+					},
+					"offsets": {
+						"from": 7620,
+						"to": 7620
+					},
+					"id": 50744,
+					"p": 0.334235,
+					"t_dtw": -1
+				}
+			],
+			"speaker_turn_next": false
+		},
+		{
+			"timestamps": {
+				"from": "00:00:07,620",
+				"to": "00:00:11,740"
+			},
+			"offsets": {
+				"from": 7620,
+				"to": 11740
+			},
+			"text": " Author of The Danger Trail, Philip Steeles, etcetera.",
+			"tokens": [
+				{
+					"text": " Author",
+					"timestamps": {
+						"from": "00:00:07,680",
+						"to": "00:00:08,090"
+					},
+					"offsets": {
+						"from": 7680,
+						"to": 8090
+					},
+					"id": 6434,
+					"p": 0.985108,
+					"t_dtw": -1
+				},
+				{
+					"text": " of",
+					"timestamps": {
+						"from": "00:00:08,190",
+						"to": "00:00:08,270"
+					},
+					"offsets": {
+						"from": 8190,
+						"to": 8270
+					},
+					"id": 286,
+					"p": 0.996105,
+					"t_dtw": -1
+				},
+				{
+					"text": " The",
+					"timestamps": {
+						"from": "00:00:08,270",
+						"to": "00:00:08,510"
+					},
+					"offsets": {
+						"from": 8270,
+						"to": 8510
+					},
+					"id": 383,
+					"p": 0.973248,
+					"t_dtw": -1
+				},
+				{
+					"text": " Danger",
+					"timestamps": {
+						"from": "00:00:08,510",
+						"to": "00:00:09,000"
+					},
+					"offsets": {
+						"from": 8510,
+						"to": 9000
+					},
+					"id": 20419,
+					"p": 0.996555,
+					"t_dtw": -1
+				},
+				{
+					"text": " Trail",
+					"timestamps": {
+						"from": "00:00:09,000",
+						"to": "00:00:09,410"
+					},
+					"offsets": {
+						"from": 9000,
+						"to": 9410
+					},
+					"id": 13069,
+					"p": 0.965434,
+					"t_dtw": -1
+				},
+				{
+					"text": ",",
+					"timestamps": {
+						"from": "00:00:09,410",
+						"to": "00:00:09,530"
+					},
+					"offsets": {
+						"from": 9410,
+						"to": 9530
+					},
+					"id": 11,
+					"p": 0.95603,
+					"t_dtw": -1
+				},
+				{
+					"text": " Philip",
+					"timestamps": {
+						"from": "00:00:09,610",
+						"to": "00:00:10,050"
+					},
+					"offsets": {
+						"from": 9610,
+						"to": 10050
+					},
+					"id": 14576,
+					"p": 0.954677,
+					"t_dtw": -1
+				},
+				{
+					"text": " Steel",
+					"timestamps": {
+						"from": "00:00:10,060",
+						"to": "00:00:10,470"
+					},
+					"offsets": {
+						"from": 10060,
+						"to": 10470
+					},
+					"id": 7851,
+					"p": 0.957577,
+					"t_dtw": -1
+				},
+				{
+					"text": "es",
+					"timestamps": {
+						"from": "00:00:10,470",
+						"to": "00:00:10,630"
+					},
+					"offsets": {
+						"from": 10470,
+						"to": 10630
+					},
+					"id": 274,
+					"p": 0.999889,
+					"t_dtw": -1
+				},
+				{
+					"text": ",",
+					"timestamps": {
+						"from": "00:00:10,630",
+						"to": "00:00:10,750"
+					},
+					"offsets": {
+						"from": 10630,
+						"to": 10750
+					},
+					"id": 11,
+					"p": 0.925401,
+					"t_dtw": -1
+				},
+				{
+					"text": " etc",
+					"timestamps": {
+						"from": "00:00:11,030",
+						"to": "00:00:11,030"
+					},
+					"offsets": {
+						"from": 11030,
+						"to": 11030
+					},
+					"id": 3503,
+					"p": 0.989264,
+					"t_dtw": -1
+				},
+				{
+					"text": "eter",
+					"timestamps": {
+						"from": "00:00:11,030",
+						"to": "00:00:11,350"
+					},
+					"offsets": {
+						"from": 11030,
+						"to": 11350
+					},
+					"id": 2357,
+					"p": 0.995288,
+					"t_dtw": -1
+				},
+				{
+					"text": "a",
+					"timestamps": {
+						"from": "00:00:11,350",
+						"to": "00:00:11,430"
+					},
+					"offsets": {
+						"from": 11350,
+						"to": 11430
+					},
+					"id": 64,
+					"p": 0.999975,
+					"t_dtw": -1
+				},
+				{
+					"text": ".",
+					"timestamps": {
+						"from": "00:00:11,740",
+						"to": "00:00:11,740"
+					},
+					"offsets": {
+						"from": 11740,
+						"to": 11740
+					},
+					"id": 13,
+					"p": 0.998719,
+					"t_dtw": -1
+				},
+				{
+					"text": "[_TT_587]",
+					"timestamps": {
+						"from": "00:00:11,740",
+						"to": "00:00:11,740"
+					},
+					"offsets": {
+						"from": 11740,
+						"to": 11740
+					},
+					"id": 50950,
+					"p": 0.274384,
+					"t_dtw": -1
+				}
+			],
+			"speaker_turn_next": false
+		},
+		{
+			"timestamps": {
+				"from": "00:00:11,740",
+				"to": "00:00:16,120"
+			},
+			"offsets": {
+				"from": 11740,
+				"to": 16120
+			},
+			"text": " Not at this particular case Tom, apologized Whitmore.",
+			"tokens": [
+				{
+					"text": " Not",
+					"timestamps": {
+						"from": "00:00:11,800",
+						"to": "00:00:11,960"
+					},
+					"offsets": {
+						"from": 11800,
+						"to": 11960
+					},
+					"id": 1892,
+					"p": 0.999039,
+					"t_dtw": -1
+				},
+				{
+					"text": " at",
+					"timestamps": {
+						"from": "00:00:12,040",
+						"to": "00:00:12,170"
+					},
+					"offsets": {
+						"from": 12040,
+						"to": 12170
+					},
+					"id": 379,
+					"p": 0.999493,
+					"t_dtw": -1
+				},
+				{
+					"text": " this",
+					"timestamps": {
+						"from": "00:00:12,170",
+						"to": "00:00:12,520"
+					},
+					"offsets": {
+						"from": 12170,
+						"to": 12520
+					},
+					"id": 428,
+					"p": 0.999889,
+					"t_dtw": -1
+				},
+				{
+					"text": " particular",
+					"timestamps": {
+						"from": "00:00:12,520",
+						"to": "00:00:13,270"
+					},
+					"offsets": {
+						"from": 12520,
+						"to": 13270
+					},
+					"id": 1948,
+					"p": 0.999958,
+					"t_dtw": -1
+				},
+				{
+					"text": " case",
+					"timestamps": {
+						"from": "00:00:13,460",
+						"to": "00:00:13,760"
+					},
+					"offsets": {
+						"from": 13460,
+						"to": 13760
+					},
+					"id": 1339,
+					"p": 0.999846,
+					"t_dtw": -1
+				},
+				{
+					"text": " Tom",
+					"timestamps": {
+						"from": "00:00:13,760",
+						"to": "00:00:14,020"
+					},
+					"offsets": {
+						"from": 13760,
+						"to": 14020
+					},
+					"id": 4186,
+					"p": 0.977098,
+					"t_dtw": -1
+				},
+				{
+					"text": ",",
+					"timestamps": {
+						"from": "00:00:14,020",
+						"to": "00:00:14,180"
+					},
+					"offsets": {
+						"from": 14020,
+						"to": 14180
+					},
+					"id": 11,
+					"p": 0.993998,
+					"t_dtw": -1
+				},
+				{
+					"text": " apologized",
+					"timestamps": {
+						"from": "00:00:14,180",
+						"to": "00:00:14,870"
+					},
+					"offsets": {
+						"from": 14180,
+						"to": 14870
+					},
+					"id": 22893,
+					"p": 0.996307,
+					"t_dtw": -1
+				},
+				{
+					"text": " Whit",
+					"timestamps": {
+						"from": "00:00:15,070",
+						"to": "00:00:15,430"
+					},
+					"offsets": {
+						"from": 15070,
+						"to": 15430
+					},
+					"id": 13183,
+					"p": 0.966215,
+					"t_dtw": -1
+				},
+				{
+					"text": "more",
+					"timestamps": {
+						"from": "00:00:15,720",
+						"to": "00:00:15,780"
+					},
+					"offsets": {
+						"from": 15720,
+						"to": 15780
+					},
+					"id": 3549,
+					"p": 0.970999,
+					"t_dtw": -1
+				},
+				{
+					"text": ".",
+					"timestamps": {
+						"from": "00:00:15,940",
+						"to": "00:00:16,120"
+					},
+					"offsets": {
+						"from": 15940,
+						"to": 16120
+					},
+					"id": 13,
+					"p": 0.998715,
+					"t_dtw": -1
+				},
+				{
+					"text": "[_TT_806]",
+					"timestamps": {
+						"from": "00:00:16,120",
+						"to": "00:00:16,120"
+					},
+					"offsets": {
+						"from": 16120,
+						"to": 16120
+					},
+					"id": 51169,
+					"p": 0.143385,
+					"t_dtw": -1
+				}
+			],
+			"speaker_turn_next": false
+		}
+	]
+}

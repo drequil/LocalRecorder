@@ -8,6 +8,7 @@ const { finalizeWavHeaderAsync } = require('./wavHeaderFix');
 const { PeakAccumulator } = require('./peakAccumulator');
 const { buildSidecar, sidecarPathFor } = require('./chunkSidecar');
 const { transcribeFile, DEFAULT_MODEL_PATH } = require('./transcribe');
+const { runDiarizer, mergeTranscriptWithDiarization } = require('./diarize');
 const { createTranscribeQueue } = require('./transcribeQueue');
 const { formatChunkMarkdown, markdownPathFor } = require('./chunkMarkdown');
 const { appendChunkToSessionHtml } = require('./sessionTranscript');
@@ -92,6 +93,28 @@ async function defaultTranscribeRun({
       return { ...result, text: filteredText, normalizeError: err.message };
     }
   }
+  // Pyannote/resemblyzer diarization: run only when speaker labels are
+  // explicitly requested and whisper produced non-empty text.  Sprint 3 passes
+  // null for sessionEmbeddingsPath; cross-chunk persistence is Sprint 4.
+  if (transcribeSpeakerLabels === true && filteredText.trim().length > 0) {
+    try {
+      let chunkDurationSec = 30; // safe fallback when stat is unavailable
+      try {
+        const stat = fsImpl.statSync(wav);
+        // 16 kHz mono 16-bit PCM: 32000 bytes/sec; 44-byte canonical WAV header
+        chunkDurationSec = Math.max(1, (stat.size - 44) / (16000 * 2));
+      } catch (_) { /* leave fallback in place */ }
+
+      const segments = await runDiarizer(wav, null);
+      const merged = mergeTranscriptWithDiarization(filteredText, segments, chunkDurationSec);
+      if (merged && merged.trim().length > 0) {
+        filteredText = merged;
+      }
+    } catch (err) {
+      process.stderr.write(`[diarize] merge error: ${err.message}\n`);
+    }
+  }
+
   return { ...result, text: filteredText, txtPath: canonical };
 }
 
