@@ -33,3 +33,5 @@ Thumbs.db
 *.swo
 .vscode/
 .idea/
+
+.hftoken

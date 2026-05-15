@@ -109,7 +109,21 @@ const state = {
   speakerLabelsEnabled: false,
   queueDepth: 0,
   chunks: [],           // { name, wavPath, status, transcript? }
+  sessionEmbeddingsPath: null,
 };
+
+// ---- Speaker count --------------------------------------------------------
+
+function readSpeakerCount() {
+  if (!state.sessionEmbeddingsPath) return 0;
+  try {
+    const raw = fs.readFileSync(state.sessionEmbeddingsPath, 'utf8');
+    const obj = JSON.parse(raw);
+    return obj && typeof obj === 'object' ? Object.keys(obj).length : 0;
+  } catch (_) {
+    return 0;
+  }
+}
 
 // ---- WebSocket helpers ----------------------------------------------------
 
@@ -130,6 +144,7 @@ function broadcastStatus() {
     transcribeEnabled: state.transcribeEnabled,
     speakerLabelsEnabled: state.speakerLabelsEnabled,
     queueDepth: state.queueDepth,
+    speakerCount: readSpeakerCount(),
   });
 }
 
@@ -297,6 +312,7 @@ app.get('/api/status', (_req, res) => {
     transcribeEnabled: state.transcribeEnabled,
     speakerLabelsEnabled: state.speakerLabelsEnabled,
     queueDepth: state.queueDepth,
+    speakerCount: readSpeakerCount(),
     chunks: state.chunks,
   });
 });
@@ -367,6 +383,11 @@ app.post('/api/start', async (req, res) => {
     return res.status(500).json({ error: `Cannot create session dir: ${err.message}` });
   }
 
+  // Cross-chunk speaker identity: one embeddings file per session, reset fresh
+  // at the start of each recording so speakers are re-identified from scratch.
+  const sessionEmbeddingsPath = path.join(sessionDir, 'speaker-embeddings.json');
+  try { fs.unlinkSync(sessionEmbeddingsPath); } catch (_) { /* doesn't exist yet, fine */ }
+
   const speakerLabelsRequested = mode !== 'listen' && transcribeSpeakerLabelsBody !== false;
   const configuredModel = userCfg.transcribeModel || DEFAULT_MODEL_PATH;
   const tinydiarizeModel = speakerLabelsRequested ? resolveTinydiarizeModel(process.cwd()) : null;
@@ -393,6 +414,7 @@ app.post('/api/start', async (req, res) => {
     entropyThreshold: resolveEntropyThreshold(null),
     maxChunkSeconds: maxChunkSeconds != null ? Number(maxChunkSeconds) : 30,
     idleSilenceSeconds: silenceSeconds != null ? Number(silenceSeconds) : 0,
+    sessionEmbeddingsPath: transcribeSpeakerLabels ? sessionEmbeddingsPath : null,
     peakHandler: onPeak,
     chunkStartedHandler: (wavPath) => {
       state.chunkCount += 1;
@@ -413,6 +435,7 @@ app.post('/api/start', async (req, res) => {
   state.speakerLabelsEnabled = transcribeSpeakerLabels;
   state.queueDepth = 0;
   state.chunks = [];
+  state.sessionEmbeddingsPath = transcribeSpeakerLabels ? sessionEmbeddingsPath : null;
   console.log(
     `Transcribe        →  ${state.transcribeEnabled ? 'on' : 'off'}; ` +
     `Speakers → ${state.speakerLabelsEnabled ? 'on' : 'off'}; ` +
@@ -485,6 +508,7 @@ app.post('/api/stop', (req, res) => {
     state.sessionDir = null;
     state.chunks = [];
     state.speakerLabelsEnabled = false;
+    state.sessionEmbeddingsPath = null;
     broadcast({ type: 'stopped', sessionDir });
   }, 250);
 });

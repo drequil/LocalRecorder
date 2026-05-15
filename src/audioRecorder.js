@@ -105,7 +105,7 @@ async function defaultTranscribeRun({
         chunkDurationSec = Math.max(1, (stat.size - 44) / (16000 * 2));
       } catch (_) { /* leave fallback in place */ }
 
-      const segments = await runDiarizer(wav, null);
+      const segments = await runDiarizer(wav, job.sessionEmbeddingsPath || null);
       const merged = mergeTranscriptWithDiarization(filteredText, segments, chunkDurationSec);
       if (merged && merged.trim().length > 0) {
         filteredText = merged;
@@ -290,6 +290,7 @@ class AudioRecorder {
       transcribeRetries = 1,
       transcribeSpeakerLabels = false,
       transcribeStereoDiarize = false,
+      sessionEmbeddingsPath = null,
       peakHandler,
       chunkStartedHandler,
       ...rest
@@ -375,6 +376,11 @@ class AudioRecorder {
       : 1;
     this.transcribeSpeakerLabels = transcribeSpeakerLabels === true;
     this.transcribeStereoDiarize = transcribeStereoDiarize === true;
+    // Cross-chunk speaker identity: path to the per-session embeddings JSON.
+    // null means no cross-chunk persistence (default / Sprint 3 behaviour).
+    this.sessionEmbeddingsPath = typeof sessionEmbeddingsPath === 'string' && sessionEmbeddingsPath
+      ? sessionEmbeddingsPath
+      : null;
     this.transcribeQueue = null;
     // Whisper-server promise: resolves to a live WhisperServer instance, or null
     // if the binary wasn't found / failed to start. Only started when transcription
@@ -436,6 +442,7 @@ class AudioRecorder {
         transcribeRetries: this.transcribeRetries,
         transcribeSpeakerLabels: this.transcribeSpeakerLabels,
         transcribeStereoDiarize: this.transcribeStereoDiarize,
+        sessionEmbeddingsPath: this.sessionEmbeddingsPath,
       });
     } else {
       trace('recorder', 'Transcription disabled (pass --transcribe on record or idle to enable)');
@@ -668,6 +675,7 @@ class AudioRecorder {
             gpuLayers: this.gpuLayers,
             transcribeSpeakerLabels: this.transcribeSpeakerLabels,
             transcribeStereoDiarize: this.transcribeStereoDiarize,
+            sessionEmbeddingsPath: this.sessionEmbeddingsPath,
           });
         }
       } else {
