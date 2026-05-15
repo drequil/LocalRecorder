@@ -20,6 +20,9 @@ models/*.bin
 
 coverage/
 
+# Smoke-test scratch files (server stdout/stderr captures, etc).
+tmp-*
+
 .DS_Store
 Thumbs.db
 *.swp

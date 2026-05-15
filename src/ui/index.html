@@ -279,6 +279,10 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
       <span id="status-dot" class="idle"></span>
       <h1>LocalRecorder</h1>
       <span id="model-chip" title="" style="margin-left:auto;font-size:10px;font-family:var(--mono);color:var(--text3);background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:2px 6px;white-space:nowrap;display:none;"></span>
+      <!-- GPU-3: shows "GPU: RTX 4070 Ti" green-on-dark when /api/config reports
+           gpu.available, "GPU: off" gray-on-dark otherwise. `title` carries the
+           full reason on hover so the user can tell why it's off. -->
+      <span id="gpu-badge" title="" style="font-size:10px;font-family:var(--mono);color:var(--text3);background:var(--surface2);border:1px solid var(--border);border-radius:3px;padding:2px 6px;white-space:nowrap;display:none;"></span>
       <span id="version-badge" style="font-size:10px;font-family:var(--mono);color:var(--text3);"></span>
     </div>
 
@@ -921,8 +925,33 @@ const rootInput    = document.getElementById('root-input');
 const rootResetBtn = document.getElementById('root-reset-btn');
 const rootHint     = document.getElementById('root-hint');
 const versionBadge = document.getElementById('version-badge');
+const gpuBadge     = document.getElementById('gpu-badge');
 
 let defaultRecordingsRoot = '';
+
+// GPU-3: render the small "GPU: <name>" / "GPU: off" badge in the sidebar.
+// We accept the gpu object that /api/config returns and pick a short label
+// (the GPU name truncated to 22 chars, or "off"). The badge's title attribute
+// carries the long-form reason / VRAM / driver string so the user can hover
+// for the full story.
+function renderGpuBadge(gpu) {
+  if (!gpu) { gpuBadge.style.display = 'none'; return; }
+  if (gpu.available) {
+    const name = (gpu.deviceName || 'GPU').slice(0, 22);
+    gpuBadge.textContent = `GPU: ${name}`;
+    gpuBadge.style.color = '#7fd181';  // green on dark
+    gpuBadge.style.borderColor = '#3b6b3d';
+    const vramStr = gpu.vramMb ? ` (${gpu.vramMb} MiB)` : '';
+    const drvStr = gpu.driver ? `\ndriver: ${gpu.driver}` : '';
+    gpuBadge.title = `${gpu.deviceName || ''}${vramStr}${drvStr}`.trim();
+  } else {
+    gpuBadge.textContent = 'GPU: off';
+    gpuBadge.style.color = 'var(--text3)';
+    gpuBadge.style.borderColor = 'var(--border)';
+    gpuBadge.title = gpu.reason || 'GPU acceleration is not available';
+  }
+  gpuBadge.style.display = '';
+}
 
 async function loadConfig() {
   try {
@@ -932,6 +961,7 @@ async function loadConfig() {
     rootHint.textContent = defaultRecordingsRoot;
     rootInput.placeholder = defaultRecordingsRoot || 'default (./recordings)';
     if (cfg.version) versionBadge.textContent = `v${cfg.version}`;
+    renderGpuBadge(cfg.gpu);
   } catch { /* server not ready yet */ }
 }
 

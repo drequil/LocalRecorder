@@ -1021,6 +1021,30 @@ Then re-run: npm run transcribe:check
 </li>
 <li>Why: GPU-1 told the user whether their hardware was capable. GPU-2 lets them actually use it. Default behaviour is unchanged, every change is opt-in via a clearly-documented CLI flag, and every chunk&#39;s on-disk artifacts now record which accelerator was requested so a later review session knows which sessions were CPU vs. GPU</li>
 </ul>
+<h2>Sprint GPU-3: v0.5.0 (Completed)</h2>
+<ul>
+<li>Surfaced the GPU probe through the web UI so the user can confirm at a glance (and confirm AFTER a server restart) that LocalRecorder is wired up to use the card. No CLI behaviour changes</li>
+<li>Files modified:<ul>
+<li><code>src/server.js</code> -- <code>getServerInfo()</code> now also calls <code>detectGpu()</code> (cached at the tools/check-gpu module level so this is O(1) after the first hit) and stamps a <code>gpu</code> block onto the cached server info: <code>{ available, deviceName, vramMb, driver, cudaCapable, reason }</code>. <code>/api/config</code> echoes this <code>gpu</code> field so the sidebar can render the badge on first paint</li>
+<li><code>src/ui/index.html</code> -- new <code>#gpu-badge</code> element in the sidebar header (between model chip and version badge). <code>renderGpuBadge(gpu)</code> paints <code>GPU: NVIDIA GeForce RTX...</code> green-on-dark when available, <code>GPU: off</code> gray-on-dark when not. <code>title</code> attribute carries the long-form reason / VRAM / driver so the user can hover for the full story</li>
+</ul>
+</li>
+<li>Validation:<ul>
+<li>Live HTTP smoke: <code>node src/server.js</code> against the workstation. <code>GET /api/config</code> returns:<pre><code class="language-json">{ &quot;gpu&quot;: { &quot;available&quot;: true, &quot;deviceName&quot;: &quot;NVIDIA GeForce RTX 4070 Ti&quot;,
+           &quot;vramMb&quot;: 12282, &quot;driver&quot;: &quot;560.94&quot;, &quot;cudaCapable&quot;: true, &quot;reason&quot;: null } }
+</code></pre>
+</li>
+<li><code>npm test</code> -- 500/500 passing (no new tests this sprint; the underlying <code>detectGpu()</code> is already covered by <code>tests/checkGpu.test.js</code>)</li>
+<li><code>node --check src/server.js src/ui/index.html</code> is N/A for HTML; server.js node-check clean</li>
+</ul>
+</li>
+<li>Known limitations:<ul>
+<li><strong>No client-side tests for the badge.</strong> The UI is plain HTML/CSS/inline-JS, no tooling, no test runner. The badge is small enough to eyeball; if it grows the project will need a UI test harness (likely Playwright). For now, the live smoke test against <code>/api/config</code> is the contract test</li>
+<li><strong>Cache is sticky.</strong> <code>getServerInfo()</code> is memoised per process. A user who plugs in a GPU mid-session won&#39;t see the badge update; a server restart picks it up. This is the same caching that already governed model / binary, and it&#39;s a deliberate trade-off: every <code>/api/config</code> call would otherwise re-spawn <code>nvidia-smi</code> and a <code>whisper-cli --help</code> probe</li>
+</ul>
+</li>
+<li>Why: GPU-1 + GPU-2 give the user the controls; GPU-3 closes the loop by confirming what state the server is actually in. Without this badge, the user can&#39;t tell whether a sprint shipped from a CLI restart and a fresh server picks up the GPU, or whether they&#39;re still on the prior CPU build. The badge is the same idea as the <code>vX.Y.Z</code> badge from the version-tracking sprint, applied to a different invariant</li>
+</ul>
 
 </body>
 </html>

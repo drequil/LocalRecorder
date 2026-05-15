@@ -10,6 +10,7 @@ const { resolveRecordPath, resolveIdleDirectory } = require('./recordingPaths');
 const { DEFAULT_MODEL_PATH, resolveBinary } = require('./transcribe');
 const { resolveBestAvailableModel } = require('./whisperModelPreset');
 const { WhisperServer } = require('./whisperServer');
+const { detectGpu } = require('../tools/check-gpu');
 const {
   resolveTranscribeThreads,
   resolveNoSpeechThreshold,
@@ -37,7 +38,26 @@ function getServerInfo() {
   const modelName = path.basename(modelPath).replace(/^ggml-/, '').replace(/\.bin$/i, '');
   const binary = resolveBinary() || null;
   const serverBinary = WhisperServer.probe() || null;
-  _serverInfo = { modelPath, modelName, binary, serverBinary };
+  // GPU-3: include the cached GPU probe so the UI can render a "GPU: RTX..."
+  // badge in the sidebar. detectGpu() is memoised at module level inside
+  // tools/check-gpu.js so this call is O(1) after the first hit.
+  const gpuInfo = detectGpu();
+  const gpu = {
+    available: !!gpuInfo.effective,
+    deviceName: gpuInfo.gpu && gpuInfo.gpu.primary ? gpuInfo.gpu.primary.name : null,
+    vramMb: gpuInfo.gpu && gpuInfo.gpu.primary ? gpuInfo.gpu.primary.vramMb : null,
+    driver: gpuInfo.gpu && gpuInfo.gpu.primary ? gpuInfo.gpu.primary.driver : null,
+    cudaCapable: !!(gpuInfo.binary && gpuInfo.binary.cudaCapable),
+    // Reason string for the "why isn't GPU on?" tooltip. Empty when effective.
+    reason: gpuInfo.effective
+      ? null
+      : (gpuInfo.gpu && !gpuInfo.gpu.available
+        ? `no GPU detected (${gpuInfo.gpu.reason})`
+        : (gpuInfo.binary && !gpuInfo.binary.cudaCapable
+          ? `whisper.cpp build does not expose GPU flags (${gpuInfo.binary.reason || 'unknown'})`
+          : 'unknown')),
+  };
+  _serverInfo = { modelPath, modelName, binary, serverBinary, gpu };
   return _serverInfo;
 }
 
@@ -212,7 +232,10 @@ app.get('/api/config', (_req, res) => {
   ensureDefaultUserConfigIfMissing();
   const userCfg = loadUserConfig();
   const root = getRecordingsRoot();
-  res.json({ recordingsRoot: root, configPath: userCfg.configPath, version: SERVER_VERSION });
+  // GPU-3: also surface the GPU probe so the sidebar can render a status
+  // badge alongside model and version. Same cached probe used by /api/info.
+  const { gpu } = getServerInfo();
+  res.json({ recordingsRoot: root, configPath: userCfg.configPath, version: SERVER_VERSION, gpu });
 });
 
 app.get('/api/status', (_req, res) => {

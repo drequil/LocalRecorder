@@ -761,3 +761,22 @@ Next: MS-1 — sox dependency probe. After that the track proceeds linearly thro
   - **`-ngl` interpretation on whisper-server.** The HTTP API doesn't accept `-ngl`; it's a process-start flag only. Same limitation as above; documented in code
 - Why: GPU-1 told the user whether their hardware was capable. GPU-2 lets them actually use it. Default behaviour is unchanged, every change is opt-in via a clearly-documented CLI flag, and every chunk's on-disk artifacts now record which accelerator was requested so a later review session knows which sessions were CPU vs. GPU
 
+## Sprint GPU-3: v0.5.0 (Completed)
+- Surfaced the GPU probe through the web UI so the user can confirm at a glance (and confirm AFTER a server restart) that LocalRecorder is wired up to use the card. No CLI behaviour changes
+- Files modified:
+  - `src/server.js` -- `getServerInfo()` now also calls `detectGpu()` (cached at the tools/check-gpu module level so this is O(1) after the first hit) and stamps a `gpu` block onto the cached server info: `{ available, deviceName, vramMb, driver, cudaCapable, reason }`. `/api/config` echoes this `gpu` field so the sidebar can render the badge on first paint
+  - `src/ui/index.html` -- new `#gpu-badge` element in the sidebar header (between model chip and version badge). `renderGpuBadge(gpu)` paints `GPU: NVIDIA GeForce RTX...` green-on-dark when available, `GPU: off` gray-on-dark when not. `title` attribute carries the long-form reason / VRAM / driver so the user can hover for the full story
+- Validation:
+  - Live HTTP smoke: `node src/server.js` against the workstation. `GET /api/config` returns:
+    ```json
+    { "gpu": { "available": true, "deviceName": "NVIDIA GeForce RTX 4070 Ti",
+               "vramMb": 12282, "driver": "560.94", "cudaCapable": true, "reason": null } }
+    ```
+  - `npm test` -- 500/500 passing (no new tests this sprint; the underlying `detectGpu()` is already covered by `tests/checkGpu.test.js`)
+  - `node --check src/server.js src/ui/index.html` is N/A for HTML; server.js node-check clean
+- Known limitations:
+  - **No client-side tests for the badge.** The UI is plain HTML/CSS/inline-JS, no tooling, no test runner. The badge is small enough to eyeball; if it grows the project will need a UI test harness (likely Playwright). For now, the live smoke test against `/api/config` is the contract test
+  - **Cache is sticky.** `getServerInfo()` is memoised per process. A user who plugs in a GPU mid-session won't see the badge update; a server restart picks it up. This is the same caching that already governed model / binary, and it's a deliberate trade-off: every `/api/config` call would otherwise re-spawn `nvidia-smi` and a `whisper-cli --help` probe
+- Why: GPU-1 + GPU-2 give the user the controls; GPU-3 closes the loop by confirming what state the server is actually in. Without this badge, the user can't tell whether a sprint shipped from a CLI restart and a fresh server picks up the GPU, or whether they're still on the prior CPU build. The badge is the same idea as the `vX.Y.Z` badge from the version-tracking sprint, applied to a different invariant
+
+
