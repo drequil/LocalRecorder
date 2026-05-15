@@ -709,6 +709,20 @@ function updateQueue(depth) {
 }
 
 // ---- Peak meter -------------------------------------------------------
+//
+// Linear amplitude 0..1 maps to dBFS as 20*log10(x). Typical speech peaks land
+// around -15..-40 dBFS (linear 0.03..0.18) — only ~3-18% of a raw linear bar,
+// so the meter looks "dead". Map a dB window to the bar width instead.
+
+const METER_BAR_DB_MIN = -60; // noise floor (silence clamp)
+
+function linearAmplitudeToBarPercent(lin) {
+  if (!(lin > 0)) return 0;
+  const db = 20 * Math.log10(Math.max(1e-10, lin));
+  if (db <= METER_BAR_DB_MIN) return 0;
+  if (db >= 0) return 100;
+  return ((db - METER_BAR_DB_MIN) / (0 - METER_BAR_DB_MIN)) * 100;
+}
 
 function onPeakData(value) {
   if (value > meterPeak) meterPeak = value;
@@ -723,7 +737,7 @@ function onPeakData(value) {
   meterDecay = meterDecay * 0.82 + meterPeak * 0.18;
   meterPeak = 0;
 
-  const pct = Math.min(100, meterDecay * 100);
+  const pct = linearAmplitudeToBarPercent(meterDecay);
   meterBar.style.width = pct + '%';
 
   // Color: green (low) → yellow (mid) → red (hot)
