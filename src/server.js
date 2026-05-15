@@ -390,7 +390,12 @@ app.post('/api/start', async (req, res) => {
 
   const speakerLabelsRequested = mode !== 'listen' && transcribeSpeakerLabelsBody !== false;
   const configuredModel = userCfg.transcribeModel || DEFAULT_MODEL_PATH;
-  const tinydiarizeModel = speakerLabelsRequested ? resolveTinydiarizeModel(process.cwd()) : null;
+  // Only use the tdrz model when whisper-cli is the active binary.
+  // whisper-server cannot load tdrz-format models; resemblyzer handles speaker
+  // labels independently so we don't need tdrz with the server binary.
+  const { serverBinary } = getServerInfo();
+  const tinydiarizeModel =
+    speakerLabelsRequested && !serverBinary ? resolveTinydiarizeModel(process.cwd()) : null;
   const model = tinydiarizeModel || configuredModel;
   const modelAbs = path.isAbsolute(model) ? model : path.resolve(process.cwd(), model);
   const modelExists = fs.existsSync(modelAbs);
