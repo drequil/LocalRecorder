@@ -40,8 +40,23 @@ function defaultChunkFilename(now = new Date(), suffix = '') {
 // filename convention the installed whisper-cli picked), and return the result.
 // Extracted so the constructor can fall back to it when the caller doesn't
 // inject a custom transcribeFn.
-async function defaultTranscribeRun({ wav, model, language, threads, noSpeechThreshold, entropyThreshold, gpu, gpuLayers }, { transcribeFn = transcribeFile, fsImpl = fs } = {}) {
-  const result = await transcribeFn({ wav, model, language, threads, noSpeechThreshold, entropyThreshold, gpu, gpuLayers });
+async function defaultTranscribeRun({
+  wav, model, language, threads, noSpeechThreshold, entropyThreshold, gpu, gpuLayers,
+  transcribeSpeakerLabels = false,
+  transcribeStereoDiarize = false,
+}, { transcribeFn = transcribeFile, fsImpl = fs } = {}) {
+  const result = await transcribeFn({
+    wav,
+    model,
+    language,
+    threads,
+    noSpeechThreshold,
+    entropyThreshold,
+    gpu,
+    gpuLayers,
+    transcribeSpeakerLabels,
+    transcribeStereoDiarize,
+  });
 
   // Apply hallucination filter.  If whisper.cpp produced text, strip any lines
   // that match known hallucination patterns (e.g. repeated "Thank you.").
@@ -250,6 +265,8 @@ class AudioRecorder {
       transcribeMinPeak = 0.005,
       transcribeQueueMax = 5,
       transcribeRetries = 1,
+      transcribeSpeakerLabels = false,
+      transcribeStereoDiarize = false,
       peakHandler,
       chunkStartedHandler,
       ...rest
@@ -333,6 +350,8 @@ class AudioRecorder {
     this.transcribeRetries = Number.isFinite(transcribeRetries) && transcribeRetries >= 0
       ? Math.floor(transcribeRetries)
       : 1;
+    this.transcribeSpeakerLabels = transcribeSpeakerLabels === true;
+    this.transcribeStereoDiarize = transcribeStereoDiarize === true;
     this.transcribeQueue = null;
     // Whisper-server promise: resolves to a live WhisperServer instance, or null
     // if the binary wasn't found / failed to start. Only started when transcription
@@ -392,6 +411,8 @@ class AudioRecorder {
         transcribeMinPeak: this.transcribeMinPeak,
         transcribeQueueMaxWarn: this.transcribeQueueMax,
         transcribeRetries: this.transcribeRetries,
+        transcribeSpeakerLabels: this.transcribeSpeakerLabels,
+        transcribeStereoDiarize: this.transcribeStereoDiarize,
       });
     } else {
       trace('recorder', 'Transcription disabled (pass --transcribe on record or idle to enable)');
@@ -431,8 +452,14 @@ class AudioRecorder {
 
   // Transcription function used when a persistent whisper-server is available.
   // Falls back to the standard whisper-cli spawn if the server is not ready.
-  async _serverAwareTranscribe({ wav, model, language, threads, noSpeechThreshold, entropyThreshold, gpu, gpuLayers }) {
-    if (this._whisperServerPromise) {
+  async _serverAwareTranscribe(opts) {
+    const {
+      wav, model, language, threads, noSpeechThreshold, entropyThreshold, gpu, gpuLayers,
+      transcribeSpeakerLabels,
+      transcribeStereoDiarize,
+    } = opts;
+    const forceCli = transcribeSpeakerLabels === true || transcribeStereoDiarize === true;
+    if (!forceCli && this._whisperServerPromise) {
       const server = await this._whisperServerPromise;
       if (server && server.ready) {
         trace('whisperServer', 'using server for chunk', { wav: path.basename(wav) });
@@ -442,9 +469,22 @@ class AudioRecorder {
         // gpu fields here. The CLI fallback below honours them.
         return server.transcribeToFile(wav, { language, noSpeechThreshold, entropyThreshold });
       }
+    } else if (forceCli) {
+      trace('whisperServer', 'speaker labels require whisper-cli; skipping server for chunk', { wav: path.basename(wav) });
     }
     trace('whisperServer', 'falling back to CLI for chunk', { wav: path.basename(wav) });
-    return transcribeFile({ wav, model, language, threads, noSpeechThreshold, entropyThreshold, gpu, gpuLayers });
+    return transcribeFile({
+      wav,
+      model,
+      language,
+      threads,
+      noSpeechThreshold,
+      entropyThreshold,
+      gpu,
+      gpuLayers,
+      transcribeSpeakerLabels,
+      transcribeStereoDiarize,
+    });
   }
 
   // Wait for any in-flight or queued transcriptions to settle. Safe to call
@@ -524,6 +564,8 @@ class AudioRecorder {
               language: this.transcribeLanguage,
               gpu: this.gpu,
               gpuLayers: this.gpuLayers,
+              speakerLabels: this.transcribeSpeakerLabels === true || undefined,
+              stereoDiarize: this.transcribeStereoDiarize === true || undefined,
             } : null,
           });
           await fs.promises.writeFile(
@@ -601,6 +643,8 @@ class AudioRecorder {
             entropyThreshold: this.entropyThreshold,
             gpu: this.gpu,
             gpuLayers: this.gpuLayers,
+            transcribeSpeakerLabels: this.transcribeSpeakerLabels,
+            transcribeStereoDiarize: this.transcribeStereoDiarize,
           });
         }
       } else {

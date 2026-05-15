@@ -160,6 +160,39 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 }
 .toggle input:checked ~ .toggle-thumb { left: 15px; background: var(--accent); }
 
+/* Diary / speaker-label slider (binary off–on) */
+.diary-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+.diary-slider-row span {
+  font-size: 11px;
+  color: var(--text3);
+  flex-shrink: 0;
+  min-width: 22px;
+}
+.diary-slider-row span.diary-val {
+  min-width: 26px;
+  text-align: center;
+  color: var(--text2);
+  font-family: var(--mono);
+}
+#diary-slider {
+  flex: 1;
+  min-width: 0;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface2);
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+#diary-slider:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* ---- Record button ---- */
 #record-btn {
   width: 100%;
@@ -351,6 +384,15 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
           <span class="toggle-thumb"></span>
         </label>
       </div>
+      <div class="field" id="diary-field">
+        <label for="diary-slider">Diary</label>
+        <div class="diary-slider-row">
+          <span>Off</span>
+          <input type="range" id="diary-slider" min="0" max="1" step="1" value="1" aria-valuetext="on">
+          <span>On</span>
+          <span class="diary-val" id="diary-slider-val">On</span>
+        </div>
+      </div>
     </div>
 
     <!-- Record button -->
@@ -456,8 +498,12 @@ const deviceSelect  = document.getElementById('device-select');
 const nameInput     = document.getElementById('name-input');
 const maxChunkInput = document.getElementById('max-chunk-input');
 const transcribeTog = document.getElementById('transcribe-toggle');
+const diarySlider = document.getElementById('diary-slider');
+const diarySliderVal = document.getElementById('diary-slider-val');
 const chunkFields   = document.getElementById('chunk-fields');
 const transcribeField = document.getElementById('transcribe-field');
+const diaryField = document.getElementById('diary-field');
+const DIARY_STORAGE_KEY = 'lr-ui-diary-on';
 const modePills     = document.querySelectorAll('.mode-pill');
 const meterBar      = document.getElementById('meter-bar');
 const meterDbEl     = document.getElementById('meter-db');
@@ -494,11 +540,43 @@ modePills.forEach((pill) => {
   });
 });
 
+function diarySliderOn() {
+  return diarySlider.value === '1';
+}
+
+function syncDiarySliderUi() {
+  const on = diarySliderOn();
+  diarySliderVal.textContent = on ? 'On' : 'Off';
+  diarySlider.setAttribute('aria-valuetext', on ? 'on' : 'off');
+}
+
+function syncDiaryEnabledState() {
+  const transcribeRelevant = appMode !== 'listen' && transcribeTog.checked;
+  diarySlider.disabled = !transcribeRelevant;
+}
+
 function updateModeUI() {
   chunkFields.style.display = appMode === 'chunk' ? '' : 'none';
   transcribeField.style.display = appMode === 'listen' ? 'none' : '';
+  diaryField.style.display = appMode === 'listen' ? 'none' : '';
+  syncDiaryEnabledState();
 }
 updateModeUI();
+
+(function initDiarySliderFromStorage() {
+  const saved = localStorage.getItem(DIARY_STORAGE_KEY);
+  diarySlider.value = saved === '0' ? '0' : '1';
+  syncDiarySliderUi();
+})();
+
+diarySlider.addEventListener('input', () => {
+  localStorage.setItem(DIARY_STORAGE_KEY, diarySlider.value === '1' ? '1' : '0');
+  syncDiarySliderUi();
+});
+
+transcribeTog.addEventListener('change', () => {
+  syncDiaryEnabledState();
+});
 
 // ---- Record button ----------------------------------------------------
 
@@ -518,6 +596,8 @@ async function doStart() {
     name: nameInput.value.trim() || undefined,
     root: rootInput.value.trim() || undefined,
     transcribe: appMode !== 'listen' ? transcribeTog.checked : false,
+    transcribeSpeakerLabels:
+      appMode !== 'listen' && transcribeTog.checked ? diarySliderOn() : false,
     maxChunkSeconds: appMode === 'chunk' ? (parseInt(maxChunkInput.value, 10) || 30) : undefined,
   };
 

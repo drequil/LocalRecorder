@@ -291,6 +291,7 @@ app.post('/api/start', async (req, res) => {
     name,
     root: rootOverride,
     transcribe: transcribeOverride,
+    transcribeSpeakerLabels: transcribeSpeakerLabelsBody,
     maxChunkSeconds,
     silenceSeconds,
   } = req.body || {};
@@ -322,9 +323,15 @@ app.post('/api/start', async (req, res) => {
   const doTranscribe = transcribeOverride === true
     || (transcribeOverride !== false && modelExists);
 
+  const transcribeSpeakerLabels =
+    doTranscribe
+    && mode !== 'listen'
+    && transcribeSpeakerLabelsBody !== false;
+
   const recorder = new AudioRecorder({
     device: device || undefined,
     transcribe: doTranscribe && mode !== 'listen',
+    transcribeSpeakerLabels,
     transcribeModel: model,
     transcribeLanguage: userCfg.transcribeLanguage || null,
     transcribeThreads: resolveTranscribeThreads(null),

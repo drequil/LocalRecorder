@@ -217,6 +217,8 @@ const RECORD_FLAGS = {
   '--no-speech-thold': { type: 'positiveNumber', as: 'noSpeechThreshold' },
   '--entropy-thold': { type: 'positiveNumber', as: 'entropyThreshold' },
   '--no-whisper-server': { type: 'flag', as: 'noWhisperServer' },
+  '--transcribe-speakers': { type: 'flag', as: 'transcribeSpeakerLabels' },
+  '--transcribe-stereo-diarize': { type: 'flag', as: 'transcribeStereoDiarize' },
   // GPU-2: GPU acceleration controls. Defaults: omit both flags ⇒ whisper.cpp's
   // own build default decides (CUDA build → GPU; CPU-only build → CPU).
   // --no-gpu hard-forces CPU even on a CUDA build.
@@ -253,6 +255,8 @@ const IDLE_FLAGS = {
   '--no-speech-thold': { type: 'positiveNumber', as: 'noSpeechThreshold' },
   '--entropy-thold': { type: 'positiveNumber', as: 'entropyThreshold' },
   '--no-whisper-server': { type: 'flag', as: 'noWhisperServer' },
+  '--transcribe-speakers': { type: 'flag', as: 'transcribeSpeakerLabels' },
+  '--transcribe-stereo-diarize': { type: 'flag', as: 'transcribeStereoDiarize' },
   '--no-gpu': { type: 'flag', as: 'noGpu' },
   '--gpu-layers': { type: 'positiveNumber', as: 'gpuLayers' },
   '--trace': { type: 'flag', as: 'trace' },
@@ -274,6 +278,8 @@ const TRANSCRIBE_FLAGS = {
   '--no-gpu': { type: 'flag', as: 'noGpu' },
   '--gpu-layers': { type: 'positiveNumber', as: 'gpuLayers' },
   '--json': { type: 'flag', as: 'json' },
+  '--transcribe-speakers': { type: 'flag', as: 'transcribeSpeakerLabels' },
+  '--transcribe-stereo-diarize': { type: 'flag', as: 'transcribeStereoDiarize' },
 };
 
 function printHelp() {
@@ -291,7 +297,7 @@ function printHelp() {
   console.log('           [--duration N | --duration-minutes N] [--max-chunk-seconds N]');
   console.log('           [--transcribe] [--model <path>] [--medium|-m] [--large|-l] [--language <code>] [--multilingual] [--trace]');
   console.log('           [--transcribe-min-peak P] [--transcribe-queue-max N]');
-  console.log('  transcribe <file.wav> [--model <path>] [--medium|-m] [--large|-l] [--language <code>] [--multilingual] [--json]');
+  console.log('  transcribe <file.wav> [--model <path>] [--medium|-m] [--large|-l] [--language <code>] [--multilingual] [--json] [--transcribe-speakers] [--transcribe-stereo-diarize]');
   console.log('  help                                                   Show this help');
   console.log('');
   console.log('Output layout:');
@@ -337,6 +343,8 @@ function printHelp() {
   console.log('  --gpu-layers N          Offload N transformer layers to the GPU (-ngl). Omit → whisper.cpp default (all layers on CUDA build)');
   console.log('  --trace                 Verbose stderr traces (also LOCALRECORDER_TRACE=1)');
   console.log('  --json                  Emit transcribe result as JSON instead of plain text');
+  console.log('  --transcribe-speakers   Label turns as Speaker 1, 2, … (whisper.cpp tinydiarize + JSON; needs compatible model)');
+  console.log('  --transcribe-stereo-diarize  Use whisper.cpp --diarize (stereo WAV; one speaker per channel)');
 }
 
 function parseRecordArgs(args) {
@@ -372,6 +380,8 @@ function parseRecordArgs(args) {
     noGpu: flags.noGpu === true,
     gpuLayers: flags.gpuLayers != null ? flags.gpuLayers : null,
     trace: flags.trace === true,
+    transcribeSpeakerLabels: flags.transcribeSpeakerLabels === true,
+    transcribeStereoDiarize: flags.transcribeStereoDiarize === true,
   };
 }
 
@@ -407,6 +417,8 @@ function parseIdleArgs(args) {
     noGpu: flags.noGpu === true,
     gpuLayers: flags.gpuLayers != null ? flags.gpuLayers : null,
     trace: flags.trace === true,
+    transcribeSpeakerLabels: flags.transcribeSpeakerLabels === true,
+    transcribeStereoDiarize: flags.transcribeStereoDiarize === true,
   };
 }
 
@@ -440,6 +452,8 @@ function parseTranscribeArgs(args) {
     noGpu: flags.noGpu === true,
     gpuLayers: flags.gpuLayers != null ? flags.gpuLayers : null,
     json: flags.json === true,
+    transcribeSpeakerLabels: flags.transcribeSpeakerLabels === true,
+    transcribeStereoDiarize: flags.transcribeStereoDiarize === true,
   };
 }
 
@@ -575,11 +589,26 @@ async function runTranscribe(args = []) {
     console.error(`Error: ${gpuFlags.error}`);
     return 1;
   }
-  trace('transcribe-cli', 'one-shot transcribe', { wav: parsed.wav, model, language: language || null, threads, noSpeechThreshold, entropyThreshold, gpu: gpuFlags.gpu, gpuLayers: gpuFlags.gpuLayers });
+  const transcribeSpeakerLabels =
+    parsed.transcribeSpeakerLabels === true || userCfg.transcribeSpeakerLabels === true;
+  const transcribeStereoDiarize =
+    parsed.transcribeStereoDiarize === true || userCfg.transcribeStereoDiarize === true;
+  trace('transcribe-cli', 'one-shot transcribe', { wav: parsed.wav, model, language: language || null, threads, noSpeechThreshold, entropyThreshold, gpu: gpuFlags.gpu, gpuLayers: gpuFlags.gpuLayers, transcribeSpeakerLabels, transcribeStereoDiarize });
 
   let result;
   try {
-    result = await transcribeFile({ wav: parsed.wav, model, language, threads, noSpeechThreshold, entropyThreshold, gpu: gpuFlags.gpu, gpuLayers: gpuFlags.gpuLayers });
+    result = await transcribeFile({
+      wav: parsed.wav,
+      model,
+      language,
+      threads,
+      noSpeechThreshold,
+      entropyThreshold,
+      gpu: gpuFlags.gpu,
+      gpuLayers: gpuFlags.gpuLayers,
+      transcribeSpeakerLabels,
+      transcribeStereoDiarize,
+    });
   } catch (err) {
     console.error(`Error: ${err.message}`);
     if (err.stderr) {
@@ -599,6 +628,8 @@ async function runTranscribe(args = []) {
       durationMs: result.durationMs,
       binary: result.binary,
       txtPath: result.txtPath,
+      jsonPath: result.jsonPath != null ? result.jsonPath : null,
+      speakerLabelMode: result.speakerLabelMode != null ? result.speakerLabelMode : null,
       version: versionInfo && versionInfo.version ? versionInfo.version : null,
       versionLabel: versionInfo ? versionInfo.label : null,
       gpu: result.gpu,
@@ -742,6 +773,8 @@ async function main(argv) {
       useWhisperServer: !parsed.noWhisperServer,
       gpu: gpuFlags.gpu,
       gpuLayers: gpuFlags.gpuLayers,
+      transcribeSpeakerLabels: parsed.transcribeSpeakerLabels,
+      transcribeStereoDiarize: parsed.transcribeStereoDiarize,
     });
   } else {
     let parsed = parseIdleArgs(tail);
@@ -810,6 +843,8 @@ async function main(argv) {
       useWhisperServer: !parsed.noWhisperServer,
       gpu: gpuFlags.gpu,
       gpuLayers: gpuFlags.gpuLayers,
+      transcribeSpeakerLabels: parsed.transcribeSpeakerLabels,
+      transcribeStereoDiarize: parsed.transcribeStereoDiarize,
     });
   }
 
@@ -829,6 +864,8 @@ async function main(argv) {
     transcribe: !!recorderOptions.transcribe,
     transcribeModel: recorderOptions.transcribeModel,
     transcribeLanguage: recorderOptions.transcribeLanguage,
+    transcribeSpeakerLabels: !!recorderOptions.transcribeSpeakerLabels,
+    transcribeStereoDiarize: !!recorderOptions.transcribeStereoDiarize,
     sessionDir,
     ...(effectiveCommand === 'record' ? { recordTarget } : { idleDirectory }),
     ...(effectiveCommand === 'idle'
