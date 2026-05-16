@@ -45,6 +45,7 @@ async function defaultTranscribeRun({
   wav, model, language, threads, noSpeechThreshold, entropyThreshold, gpu, gpuLayers,
   transcribeSpeakerLabels = false,
   transcribeStereoDiarize = false,
+  sessionEmbeddingsPath = null,
 }, { transcribeFn = transcribeFile, fsImpl = fs } = {}) {
   const result = await transcribeFn({
     wav,
@@ -105,7 +106,7 @@ async function defaultTranscribeRun({
         chunkDurationSec = Math.max(1, (stat.size - 44) / (16000 * 2));
       } catch (_) { /* leave fallback in place */ }
 
-      const segments = await runDiarizer(wav, job.sessionEmbeddingsPath || null);
+      const segments = await runDiarizer(wav, sessionEmbeddingsPath);
       const merged = mergeTranscriptWithDiarization(filteredText, segments, chunkDurationSec);
       if (merged && merged.trim().length > 0) {
         filteredText = merged;
