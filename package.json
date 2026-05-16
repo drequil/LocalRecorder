@@ -13,7 +13,8 @@
     "transcribe:check": "node tools/check-transcribe-deps.js",
     "gpu:check": "node tools/check-gpu.js",
     "gpu:install": "node tools/install-whisper-cuda.js",
-    "gpu:bench": "node tools/bench-gpu.js"
+    "gpu:bench": "node tools/bench-gpu.js",
+    "uat:diarize": "node tests/uat-diarization.js"
   },
   "keywords": [
     "ai",
