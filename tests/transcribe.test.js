@@ -132,9 +132,14 @@ describe('buildWhisperArgs', () => {
       .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '-f', 'a.wav']);
   });
 
-  test('adds --translate before -f when translation is enabled', () => {
+  test('adds --translate with auto language before -f when translation is enabled', () => {
     expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', translate: true }))
-      .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '--translate', '-f', 'a.wav']);
+      .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '-l', 'auto', '--translate', '-f', 'a.wav']);
+  });
+
+  test('honors explicit source language when translation is enabled', () => {
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', language: 'zh', translate: true }))
+      .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '-l', 'zh', '--translate', '-f', 'a.wav']);
   });
 
   test('inserts -t N after -m when threads is a positive integer', () => {

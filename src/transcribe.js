@@ -128,11 +128,14 @@ function buildWhisperArgs({
   if (entropyThreshold != null && Number.isFinite(entropyThreshold)) {
     args.push('--entropy-thold', String(entropyThreshold));
   }
-  if (language != null && String(language).trim() !== '') {
-    args.push('-l', String(language).trim());
-  }
   if (translate === true) {
+    const sourceLanguage = language != null && String(language).trim() !== ''
+      ? String(language).trim()
+      : 'auto';
+    args.push('-l', sourceLanguage);
     args.push('--translate');
+  } else if (language != null && String(language).trim() !== '') {
+    args.push('-l', String(language).trim());
   }
   if (speakerLabelMode === 'tinydiarize') {
     args.push('--tinydiarize', '--output-json', '--output-json-full');
