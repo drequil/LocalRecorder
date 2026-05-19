@@ -132,7 +132,7 @@ function buildWhisperArgs({
     args.push('-l', String(language).trim());
   }
   if (translate === true) {
-    args.push('--task', 'translate');
+    args.push('--translate');
   }
   if (speakerLabelMode === 'tinydiarize') {
     args.push('--tinydiarize', '--output-json', '--output-json-full');
