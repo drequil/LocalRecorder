@@ -90,6 +90,7 @@ function buildWhisperArgs({
   model, wav, language = null, threads = null,
   noSpeechThreshold = null, entropyThreshold = null,
   gpu = null, gpuLayers = null,
+  translate = false,
   speakerLabelMode = null,
 }) {
   if (!model) throw new TypeError('buildWhisperArgs: model is required');
@@ -129,6 +130,9 @@ function buildWhisperArgs({
   }
   if (language != null && String(language).trim() !== '') {
     args.push('-l', String(language).trim());
+  }
+  if (translate === true) {
+    args.push('--task', 'translate');
   }
   if (speakerLabelMode === 'tinydiarize') {
     args.push('--tinydiarize', '--output-json', '--output-json-full');
@@ -220,6 +224,7 @@ async function transcribeFile({
   fsImpl = fs,
   transcribeSpeakerLabels = false,
   transcribeStereoDiarize = false,
+  transcribeTranslate = false,
   whisperCapabilities = null,
 } = {}) {
   if (!wav || typeof wav !== 'string') {
@@ -276,6 +281,7 @@ async function transcribeFile({
     entropyThreshold,
     gpu,
     gpuLayers,
+    translate: transcribeTranslate === true,
     speakerLabelMode: speakerMode,
   });
   trace('whisper', 'spawn', {
@@ -286,6 +292,7 @@ async function transcribeFile({
     language: language || null,
     gpu,
     gpuLayers,
+    translate: transcribeTranslate === true,
     speakerLabelMode: speakerMode,
   });
   const startedAt = Date.now();

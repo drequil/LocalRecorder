@@ -402,6 +402,14 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
         </div>
         <p id="speakers-cap-hint" class="speakers-cap-hint" hidden></p>
       </div>
+      <div class="field" id="translate-field">
+        <label for="translate-slider">Translate</label>
+        <div class="speakers-slider-row">
+          <span id="translate-label-off" class="speakers-end-label is-active">Off</span>
+          <input type="range" id="translate-slider" min="0" max="1" step="1" value="0" aria-valuetext="off">
+          <span id="translate-label-on" class="speakers-end-label">On</span>
+        </div>
+      </div>
     </div>
 
     <!-- Record button -->
@@ -510,9 +518,13 @@ const transcribeTog = document.getElementById('transcribe-toggle');
 const speakersSlider = document.getElementById('speakers-slider');
 const speakersLabelOff = document.getElementById('speakers-label-off');
 const speakersLabelOn = document.getElementById('speakers-label-on');
+const translateSlider = document.getElementById('translate-slider');
+const translateLabelOff = document.getElementById('translate-label-off');
+const translateLabelOn = document.getElementById('translate-label-on');
 const chunkFields   = document.getElementById('chunk-fields');
 const transcribeField = document.getElementById('transcribe-field');
 const speakersField = document.getElementById('speakers-field');
+const translateField = document.getElementById('translate-field');
 
 /** From GET /api/config — drives whisper-cpp capability banner under Speakers */
 let cachedSpeakerLabelsPayload = null;
@@ -558,6 +570,10 @@ function speakersLabelsOn() {
   return speakersSlider.value === '1';
 }
 
+function translateOn() {
+  return translateSlider.value === '1';
+}
+
 function syncSpeakersSliderUi() {
   const on = speakersLabelsOn();
   speakersSlider.setAttribute('aria-valuetext', on ? 'on' : 'off');
@@ -566,9 +582,17 @@ function syncSpeakersSliderUi() {
   refreshSpeakersCapabilityBanner();
 }
 
+function syncTranslateSliderUi() {
+  const on = translateOn();
+  translateSlider.setAttribute('aria-valuetext', on ? 'on' : 'off');
+  translateLabelOff.classList.toggle('is-active', !on);
+  translateLabelOn.classList.toggle('is-active', on);
+}
+
 function syncSpeakersEnabledState() {
   const transcribeRelevant = appMode !== 'listen' && transcribeTog.checked;
   speakersSlider.disabled = !transcribeRelevant;
+  translateSlider.disabled = !transcribeRelevant;
   refreshSpeakersCapabilityBanner();
 }
 
@@ -619,6 +643,7 @@ function updateModeUI() {
   chunkFields.style.display = appMode === 'chunk' ? '' : 'none';
   transcribeField.style.display = appMode === 'listen' ? 'none' : '';
   speakersField.style.display = appMode === 'listen' ? 'none' : '';
+  translateField.style.display = appMode === 'listen' ? 'none' : '';
   syncSpeakersEnabledState();
 }
 updateModeUI();
@@ -630,6 +655,10 @@ updateModeUI();
 
 speakersSlider.addEventListener('input', () => {
   syncSpeakersSliderUi();
+});
+
+translateSlider.addEventListener('input', () => {
+  syncTranslateSliderUi();
 });
 
 transcribeTog.addEventListener('change', () => {
@@ -656,6 +685,8 @@ async function doStart() {
     transcribe: appMode !== 'listen' ? transcribeTog.checked : false,
     transcribeSpeakerLabels:
       appMode !== 'listen' && transcribeTog.checked ? speakersLabelsOn() : false,
+    transcribeTranslate:
+      appMode !== 'listen' && transcribeTog.checked ? translateOn() : false,
     maxChunkSeconds: appMode === 'chunk' ? (parseInt(maxChunkInput.value, 10) || 30) : undefined,
   };
 

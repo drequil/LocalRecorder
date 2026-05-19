@@ -132,6 +132,11 @@ describe('buildWhisperArgs', () => {
       .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '-f', 'a.wav']);
   });
 
+  test('adds --task translate before -f when translation is enabled', () => {
+    expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', translate: true }))
+      .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '--task', 'translate', '-f', 'a.wav']);
+  });
+
   test('inserts -t N after -m when threads is a positive integer', () => {
     expect(buildWhisperArgs({ model: 'm.bin', wav: 'a.wav', threads: 8 }))
       .toEqual(['--no-prints', '--output-txt', '-m', 'm.bin', '-t', '8', '-f', 'a.wav']);

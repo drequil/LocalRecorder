@@ -45,6 +45,7 @@ async function defaultTranscribeRun({
   wav, model, language, threads, noSpeechThreshold, entropyThreshold, gpu, gpuLayers,
   transcribeSpeakerLabels = false,
   transcribeStereoDiarize = false,
+  transcribeTranslate = false,
   sessionEmbeddingsPath = null,
 }, { transcribeFn = transcribeFile, fsImpl = fs } = {}) {
   const result = await transcribeFn({
@@ -58,6 +59,7 @@ async function defaultTranscribeRun({
     gpuLayers,
     transcribeSpeakerLabels,
     transcribeStereoDiarize,
+    transcribeTranslate,
   });
 
   // Apply hallucination filter.  If whisper.cpp produced text, strip any lines
@@ -291,6 +293,7 @@ class AudioRecorder {
       transcribeRetries = 1,
       transcribeSpeakerLabels = false,
       transcribeStereoDiarize = false,
+      transcribeTranslate = false,
       sessionEmbeddingsPath = null,
       peakHandler,
       chunkStartedHandler,
@@ -377,6 +380,7 @@ class AudioRecorder {
       : 1;
     this.transcribeSpeakerLabels = transcribeSpeakerLabels === true;
     this.transcribeStereoDiarize = transcribeStereoDiarize === true;
+    this.transcribeTranslate = transcribeTranslate === true;
     // Cross-chunk speaker identity: path to the per-session embeddings JSON.
     // null means no cross-chunk persistence (default / Sprint 3 behaviour).
     this.sessionEmbeddingsPath = typeof sessionEmbeddingsPath === 'string' && sessionEmbeddingsPath
@@ -443,6 +447,7 @@ class AudioRecorder {
         transcribeRetries: this.transcribeRetries,
         transcribeSpeakerLabels: this.transcribeSpeakerLabels,
         transcribeStereoDiarize: this.transcribeStereoDiarize,
+        transcribeTranslate: this.transcribeTranslate,
         sessionEmbeddingsPath: this.sessionEmbeddingsPath,
       });
     } else {
@@ -488,8 +493,10 @@ class AudioRecorder {
       wav, model, language, threads, noSpeechThreshold, entropyThreshold, gpu, gpuLayers,
       transcribeSpeakerLabels,
       transcribeStereoDiarize,
+      transcribeTranslate,
     } = opts;
-    const forceCli = transcribeSpeakerLabels === true || transcribeStereoDiarize === true;
+    const forceCli =
+      transcribeSpeakerLabels === true || transcribeStereoDiarize === true || transcribeTranslate === true;
     if (!forceCli && this._whisperServerPromise) {
       const server = await this._whisperServerPromise;
       if (server && server.ready) {
@@ -501,7 +508,7 @@ class AudioRecorder {
         return server.transcribeToFile(wav, { language, noSpeechThreshold, entropyThreshold });
       }
     } else if (forceCli) {
-      trace('whisperServer', 'speaker labels require whisper-cli; skipping server for chunk', { wav: path.basename(wav) });
+      trace('whisperServer', 'speaker labels or translation require whisper-cli; skipping server for chunk', { wav: path.basename(wav) });
     }
     trace('whisperServer', 'falling back to CLI for chunk', { wav: path.basename(wav) });
     return transcribeFile({
@@ -515,6 +522,7 @@ class AudioRecorder {
       gpuLayers,
       transcribeSpeakerLabels,
       transcribeStereoDiarize,
+      transcribeTranslate,
     });
   }
 
@@ -597,6 +605,7 @@ class AudioRecorder {
               gpuLayers: this.gpuLayers,
               speakerLabels: this.transcribeSpeakerLabels === true || undefined,
               stereoDiarize: this.transcribeStereoDiarize === true || undefined,
+              translate: this.transcribeTranslate === true || undefined,
             } : null,
           });
           await fs.promises.writeFile(
@@ -676,6 +685,7 @@ class AudioRecorder {
             gpuLayers: this.gpuLayers,
             transcribeSpeakerLabels: this.transcribeSpeakerLabels,
             transcribeStereoDiarize: this.transcribeStereoDiarize,
+            transcribeTranslate: this.transcribeTranslate,
             sessionEmbeddingsPath: this.sessionEmbeddingsPath,
           });
         }
