@@ -419,7 +419,10 @@ app.post('/api/start', async (req, res) => {
     transcribeSpeakerLabels,
     transcribeTranslate,
     transcribeModel: model,
-    transcribeLanguage: userCfg.transcribeLanguage || null,
+    // Translation needs source-language auto-detect. Forcing the normal
+    // English transcription language (`-l en`) makes non-English speech
+    // transcribe in-place instead of translating reliably.
+    transcribeLanguage: transcribeTranslate ? null : (userCfg.transcribeLanguage || null),
     transcribeThreads: resolveTranscribeThreads(null),
     noSpeechThreshold: resolveNoSpeechThreshold(null),
     entropyThreshold: resolveEntropyThreshold(null),
